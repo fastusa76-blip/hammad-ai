@@ -118,12 +118,23 @@ async def handler(websocket):
             try:
                 data = json.loads(message)
                 action = data.get("action")
+                request_id = data.get("requestId")
                 if action == "launch":
                     app = data.get("app")
-                    success = launch_application(app)
-                    await websocket.send(json.dumps({
+                    success = isinstance(app, str) and launch_application(app)
+                    response = {
+                        "requestId": request_id,
                         "status": "ok" if success else "failed",
-                        "app": app
+                        "app": app,
+                    }
+                    if not success:
+                        response["error"] = "Application launch failed; check the bridge console and app installation."
+                    await websocket.send(json.dumps(response))
+                else:
+                    await websocket.send(json.dumps({
+                        "requestId": request_id,
+                        "status": "failed",
+                        "error": "Unsupported action."
                     }))
             except Exception as e:
                 print(f"[!] Invalid message payload: {e}")

@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx server.ts",
-    "build": "vite build",
-    "preview": "vite preview --port 3000 --host 0.0.0.0"
+    "lint": "tsc --noEmit",
+    "build": "npm run lint && vite build",
+    "preview": "vite preview --port 3000 --host 127.0.0.1"
   },
   "dependencies": {
     "@google/genai": "^2.30.0",

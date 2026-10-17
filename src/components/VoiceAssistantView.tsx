@@ -15,6 +15,8 @@ import {
   CheckCircle2,
   Send,
   AlertTriangle,
+  Activity,
+  Terminal,
   HelpCircle,
 } from 'lucide-react';
 import {
@@ -23,7 +25,8 @@ import {
   speakText,
   stopSpeaking,
   isSpeechRecognitionSupported,
-  requestMicrophoneAccess,
+  startAudioLevelMeter,
+  stopAudioLevelMeter,
 } from '../lib/voice';
 import {
   processVoiceCommand,
@@ -48,14 +51,15 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
   const [language, setLanguage] = useState(settings.voiceLanguage || 'ur-PK');
   const [autoSpeak, setAutoSpeak] = useState(settings.autoSpeak ?? true);
 
+  const [micAudioLevel, setMicAudioLevel] = useState(0);
   const [currentTranscript, setCurrentTranscript] = useState('');
   const [lastUserSpeech, setLastUserSpeech] = useState('');
   const [lastAssistantSpeech, setLastAssistantSpeech] = useState('');
   const [textCommandInput, setTextCommandInput] = useState('');
 
-  const [micErrorMessage, setMicErrorMessage] = useState<string | null>(null);
+  const [voiceError, setVoiceError] = useState<{ code: string; message: string } | null>(null);
   const [actionHistory, setActionHistory] = useState<ExecutedAction[]>([]);
-  const [activeYouTube, setActiveYouTube] = useState<{ query: string; videoId: string } | null>(null);
+  const [activeYouTube, setActiveYouTube] = useState<{ query: string; videoId?: string; isExact: boolean } | null>(null);
   const [isBridgeConnected, setIsBridgeConnected] = useState(isDesktopBridgeActive());
 
   const transcriptDebounceRef = useRef<NodeJS.Timeout | null>(null);
@@ -68,6 +72,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
     });
     return () => {
       stopSpeechRecognition();
+      stopAudioLevelMeter();
       stopSpeaking();
       unsubscribe();
     };
@@ -79,7 +84,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
     setLastUserSpeech(transcript);
     setCurrentTranscript('');
     setIsProcessing(true);
-    setMicErrorMessage(null);
+    setVoiceError(null);
 
     try {
       const result = await processVoiceCommand(transcript, settings.apiKey);
@@ -90,11 +95,12 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
         setActionHistory((prev) => [result.actionCard!, ...prev.slice(0, 9)]);
       }
 
-      // Handle YouTube video embed trigger
+      // Handle YouTube video embed or search trigger
       if (result.intent === 'youtube' && result.query) {
         setActiveYouTube({
           query: result.query,
-          videoId: result.videoId || '5Eqb_-j3FDA',
+          videoId: result.videoId,
+          isExact: Boolean(result.isExactMatch),
         });
       }
 
@@ -119,40 +125,40 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
     }
   };
 
-  const toggleListening = async () => {
+  const toggleListening = () => {
     if (isListening) {
       stopSpeechRecognition();
+      stopAudioLevelMeter();
       setIsListening(false);
+      setMicAudioLevel(0);
       setCurrentTranscript('');
       return;
     }
 
     if (!isSpeechRecognitionSupported()) {
-      setMicErrorMessage(
-        'Speech Recognition is not supported in this browser engine. Please use Google Chrome or Microsoft Edge, or type commands below.'
-      );
+      setVoiceError({
+        code: 'not_supported',
+        message:
+          'آپ کے براؤزر میں Speech Recognition سپورٹ نہیں ہے۔ براہ کرم Google Chrome یا Microsoft Edge استعمال کریں، یا نیچے دی گئی کمانڈ بار میں لکھیں۔',
+      });
       return;
     }
 
     stopSpeaking();
     setIsSpeaking(false);
-    setMicErrorMessage(null);
+    setVoiceError(null);
 
-    // Request explicit microphone access first
-    const micPerm = await requestMicrophoneAccess();
-    if (!micPerm.granted) {
-      setMicErrorMessage(
-        micPerm.error ||
-          'Microphone permission blocked. Please click the lock/settings icon in the browser address bar and set Microphone to "Allow".'
-      );
-      setIsListening(false);
-      return;
-    }
+    // Start audio level visualizer so user sees mic hardware activity
+    startAudioLevelMeter((level) => {
+      setMicAudioLevel(level);
+    });
 
-    setIsListening(true);
-
-    startSpeechRecognition({
+    // Start recognition directly without destructive getUserMedia track stops
+    const recognition = startSpeechRecognition({
       language,
+      onListeningStateChange: (active) => {
+        setIsListening(active);
+      },
       onInterim: (interim) => {
         setCurrentTranscript(interim);
       },
@@ -163,14 +169,22 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
           handleCommandExecution(finalText);
         }, 500);
       },
-      onError: (errMessage) => {
-        setMicErrorMessage(errMessage);
+      onError: (errDetails) => {
+        setVoiceError(errDetails);
         setIsListening(false);
+        stopAudioLevelMeter();
+        setMicAudioLevel(0);
       },
       onEnd: () => {
         setIsListening(false);
+        stopAudioLevelMeter();
+        setMicAudioLevel(0);
       },
     });
+
+    if (recognition) {
+      setIsListening(true);
+    }
   };
 
   const handleManualSubmit = (e?: React.FormEvent) => {
@@ -251,28 +265,30 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
               }`}
             >
               <Laptop className="w-3.5 h-3.5" />
-              <span>{isBridgeConnected ? 'Laptop Connected' : 'Laptop Bridge'}</span>
+              <span>{isBridgeConnected ? 'Laptop Connected' : 'Laptop Bridge Offline'}</span>
               <span className={`w-2 h-2 rounded-full ${isBridgeConnected ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}`} />
             </button>
           </div>
         </div>
 
-        {/* Microphone Error Banner if Permission Blocked */}
-        {micErrorMessage && (
-          <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-xs flex items-start justify-between gap-3 shadow-lg">
+        {/* Clear Error Notification Banner */}
+        {voiceError && (
+          <div className="p-4 rounded-2xl bg-rose-500/10 border border-rose-500/30 text-rose-200 text-xs flex items-start justify-between gap-3 shadow-lg">
             <div className="flex items-start gap-2.5">
-              <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
               <div>
-                <div className="font-bold text-amber-300">مائیکروفون پرمیشن یا سیٹ اپ:</div>
-                <div className="text-[11px] text-amber-200/90 mt-0.5">{micErrorMessage}</div>
-                <div className="text-[10px] text-amber-300/80 mt-1">
-                  💡 آپ نیچے دیے گئے باکس میں کوئی بھی کمانڈ (جیسے "کروم چلاؤ" یا "یوٹیوب پر گانا چلاؤ") لکھ کر بھی ٹیسٹ کر سکتے ہیں!
+                <div className="font-bold text-rose-300">
+                  وائس ریکگنیشن ایرر ({voiceError.code}):
+                </div>
+                <div className="text-[11px] text-rose-200/90 mt-0.5">{voiceError.message}</div>
+                <div className="text-[10px] text-rose-300/80 mt-1.5 flex items-center gap-2">
+                  <span>💡 براؤزر ایڈریس بار میں لاک/سیٹنگ آئیکون پر کلک کر کے Microphone کو Allow کریں۔</span>
                 </div>
               </div>
             </div>
             <button
-              onClick={() => setMicErrorMessage(null)}
-              className="text-amber-400 hover:text-white p-1 rounded-lg"
+              onClick={() => setVoiceError(null)}
+              className="text-rose-400 hover:text-white p-1 rounded-lg"
             >
               <X className="w-4 h-4" />
             </button>
@@ -292,24 +308,31 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
             }`}
           />
 
-          {/* Sound waves animation bars */}
+          {/* Sound waves animation bars reacting to REAL mic audio level */}
           <div className="flex items-center gap-1.5 h-12 mb-6">
-            {[40, 80, 60, 100, 70, 90, 50, 85, 65, 45].map((h, i) => (
-              <span
-                key={i}
-                className={`w-1 rounded-full transition-all duration-300 ${
-                  isListening
-                    ? 'bg-rose-500 animate-bounce'
-                    : isSpeaking
-                    ? 'bg-cyan-400 animate-pulse'
-                    : 'bg-slate-700 h-2'
-                }`}
-                style={{
-                  height: isListening || isSpeaking ? `${h}%` : '8px',
-                  animationDelay: `${i * 75}ms`,
-                }}
-              />
-            ))}
+            {[40, 80, 60, 100, 70, 90, 50, 85, 65, 45].map((baseH, i) => {
+              const dynamicHeight = isListening
+                ? Math.max(15, Math.min(100, (micAudioLevel * (baseH / 50))))
+                : isSpeaking
+                ? baseH
+                : 10;
+
+              return (
+                <span
+                  key={i}
+                  className={`w-1 rounded-full transition-all duration-150 ${
+                    isListening
+                      ? 'bg-rose-500 shadow-sm shadow-rose-500'
+                      : isSpeaking
+                      ? 'bg-cyan-400 animate-pulse'
+                      : 'bg-slate-700'
+                  }`}
+                  style={{
+                    height: `${dynamicHeight}%`,
+                  }}
+                />
+              );
+            })}
           </div>
 
           {/* Big Voice Button */}
@@ -332,17 +355,43 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
             )}
           </button>
 
-          {/* Status Label */}
-          <div className="mt-5 space-y-1 z-10">
-            <div className="text-sm sm:text-base font-bold text-slate-100">
-              {isListening
-                ? 'Listening to your voice... بولیں، سن رہا ہوں'
-                : isSpeaking
-                ? 'Hammad AI بول رہا ہے...'
-                : isProcessing
-                ? 'کمانڈ پر عمل ہو رہا ہے...'
-                : 'مائیکروفون پر کلک کر کے بولیں'}
+          {/* Status Label & Live Mic VU-Meter */}
+          <div className="mt-5 space-y-1.5 z-10">
+            <div className="text-sm sm:text-base font-bold text-slate-100 flex items-center justify-center gap-2">
+              {isListening ? (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-rose-500 animate-ping" />
+                  <span>Listening... بولیں، مائیکروفون آن ہے</span>
+                </>
+              ) : isSpeaking ? (
+                <>
+                  <Volume2 className="w-4 h-4 text-cyan-400" />
+                  <span>Hammad AI بول رہا ہے...</span>
+                </>
+              ) : isProcessing ? (
+                <>
+                  <RefreshCw className="w-4 h-4 text-indigo-400 animate-spin" />
+                  <span>کمانڈ پر عمل ہو رہا ہے...</span>
+                </>
+              ) : (
+                'مائیکروفون پر کلک کر کے بولیں'
+              )}
             </div>
+
+            {/* Live mic decibel meter bar when listening */}
+            {isListening && (
+              <div className="flex items-center justify-center gap-2 text-[11px] text-slate-400">
+                <Activity className="w-3.5 h-3.5 text-rose-400" />
+                <span>Mic Level: {micAudioLevel}%</span>
+                <div className="w-24 h-1.5 bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-rose-500 transition-all duration-100"
+                    style={{ width: `${micAudioLevel}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
             <p className="text-xs text-slate-400 max-w-md mx-auto">
               کہیں: <span className="text-indigo-300 font-semibold">"کروم چلاؤ"</span>،{' '}
               <span className="text-indigo-300 font-semibold">"اینڈرائیڈ اسٹوڈیو کھولو"</span>، یا{' '}
@@ -359,7 +408,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
               type="text"
               value={textCommandInput}
               onChange={(e) => setTextCommandInput(e.target.value)}
-              placeholder="یا یہاں کمانڈ لکھیں (مثلاً: کروم چلاؤ / YouTube par gana chalao)..."
+              placeholder="یا یہاں کمانڈ لکھیں (مثلاً: کروم چلاؤ / Play Pasoori on YouTube)..."
               className="flex-1 bg-transparent px-3 py-2 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none"
             />
             <button
@@ -402,14 +451,15 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
           )}
         </div>
 
-        {/* Embedded YouTube Theater Player (Opens when music requested) */}
+        {/* Embedded YouTube Theater Player (Honest & Accurate) */}
         {activeYouTube && (
           <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-2xl transition-all">
             <div className="px-4 py-3 bg-slate-950 flex items-center justify-between border-b border-slate-800">
               <div className="flex items-center gap-2">
                 <Youtube className="w-5 h-5 text-rose-500" />
                 <span className="text-xs font-bold text-slate-200">
-                  YouTube Player: <span className="text-rose-400">{activeYouTube.query}</span>
+                  {activeYouTube.isExact ? 'Playing Video: ' : 'YouTube Results for: '}
+                  <span className="text-rose-400">{activeYouTube.query}</span>
                 </span>
               </div>
               <div className="flex items-center gap-2">
@@ -419,7 +469,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
                   rel="noopener noreferrer"
                   className="text-xs text-slate-300 hover:text-white flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-500 transition-colors font-medium shadow-sm"
                 >
-                  <span>Open in YouTube</span>
+                  <span>Watch on YouTube</span>
                   <ExternalLink className="w-3 h-3" />
                 </a>
                 <button
@@ -432,13 +482,34 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
             </div>
 
             <div className="relative w-full aspect-video bg-black flex items-center justify-center">
-              <iframe
-                title="YouTube Video Player"
-                className="w-full h-full border-0"
-                src={`https://www.youtube.com/embed/${activeYouTube.videoId}?autoplay=1&enablejsapi=1`}
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                allowFullScreen
-              />
+              {activeYouTube.videoId ? (
+                <iframe
+                  title="YouTube Video Player"
+                  className="w-full h-full border-0"
+                  src={`https://www.youtube.com/embed/${activeYouTube.videoId}?autoplay=1&enablejsapi=1`}
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                  allowFullScreen
+                />
+              ) : (
+                <div className="text-center p-8 space-y-3">
+                  <Youtube className="w-12 h-12 text-rose-500 mx-auto" />
+                  <div className="text-sm font-bold text-slate-200">
+                    YouTube Search Opened in New Tab
+                  </div>
+                  <p className="text-xs text-slate-400 max-w-sm mx-auto">
+                    Search query for "{activeYouTube.query}" was launched directly on YouTube.
+                  </p>
+                  <a
+                    href={`https://www.youtube.com/results?search_query=${encodeURIComponent(activeYouTube.query)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold"
+                  >
+                    <span>Click to view results on YouTube</span>
+                    <ExternalLink className="w-3.5 h-3.5" />
+                  </a>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -470,7 +541,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
         {actionHistory.length > 0 && (
           <div className="space-y-2">
             <div className="text-xs font-bold uppercase tracking-wider text-slate-400">
-              Recent Executed Actions
+              Recent Executed Actions & App Signals
             </div>
             <div className="space-y-2">
               {actionHistory.map((act) => (
@@ -479,8 +550,18 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
                   className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3 flex items-start justify-between gap-3 text-xs"
                 >
                   <div className="flex items-start gap-2.5">
-                    <span className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0 mt-0.5">
-                      <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span
+                      className={`p-1.5 rounded-lg shrink-0 mt-0.5 ${
+                        act.status === 'success'
+                          ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
+                          : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                      }`}
+                    >
+                      {act.status === 'success' ? (
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                      ) : (
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                      )}
                     </span>
                     <div>
                       <div className="font-bold text-slate-200">{act.title}</div>
@@ -495,7 +576,7 @@ export const VoiceAssistantView: React.FC<VoiceAssistantViewProps> = ({
                       rel="noopener noreferrer"
                       className="text-[11px] text-indigo-400 hover:text-indigo-300 font-medium flex items-center gap-1 shrink-0 px-2.5 py-1.5 rounded-lg bg-slate-800 border border-slate-700 hover:bg-slate-700 transition-colors"
                     >
-                      <span>Open App</span>
+                      <span>Open Link</span>
                       <ExternalLink className="w-3 h-3" />
                     </a>
                   )}

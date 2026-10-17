@@ -9,13 +9,42 @@ export async function checkServerHealth() {
   }
 }
 
+export async function testGeminiDiagnostic(apiKey?: string): Promise<{
+  configured: boolean;
+  status: 'connected' | 'error' | 'missing_key';
+  model?: string;
+  latencyMs?: number;
+  errorMessage?: string;
+  errorCode?: string;
+  message?: string;
+  response?: string;
+}> {
+  try {
+    const url = apiKey ? `/api/gemini/test?apiKey=${encodeURIComponent(apiKey)}` : '/api/gemini/test';
+    const res = await fetch(url);
+    return await res.json();
+  } catch (err: any) {
+    return {
+      configured: false,
+      status: 'error',
+      errorMessage: err.message || 'Network error reaching server',
+    };
+  }
+}
+
 export async function sendChatMessage(params: {
   messages: Array<{ role: string; content: string }>;
   systemInstruction?: string;
   model?: string;
   temperature?: number;
   apiKey?: string;
-}): Promise<{ text: string; model?: string; source?: 'gemini' | 'offline-agent'; note?: string }> {
+}): Promise<{
+  text: string;
+  model?: string;
+  source?: 'gemini' | 'offline-agent';
+  note?: string;
+  geminiError?: { message: string; code?: string };
+}> {
   const res = await fetch('/api/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

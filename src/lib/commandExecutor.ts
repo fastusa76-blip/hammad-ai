@@ -55,21 +55,14 @@ export function sendCommandToBridge(command: { action: string; app?: string; cmd
   return false;
 }
 
-// Curated verified YouTube video IDs for instant, guaranteed embedding
-const CURATED_YOUTUBE_VIDEOS: Record<string, string> = {
-  pasoori: '5Eqb_-j3FDA',
-  'ali sethi': '5Eqb_-j3FDA',
-  'arijit singh': 'r32n_c1kGfQ',
-  arijit: 'r32n_c1kGfQ',
-  'coke studio': 'JFcgOboErgk',
-  'cokestudio': 'JFcgOboErgk',
-  lofi: 'jfKfPfyJRdk',
-  'lo-fi': 'jfKfPfyJRdk',
-  'atif aslam': 'r0Tf8XF71s4',
-  atif: 'r0Tf8XF71s4',
-  sidhu: '4dfE_bVjE_k',
-  nusrat: 'h_vJgIe8zSg',
-  'rahat fateh': '1bUq93zSgHY',
+// Curated verified YouTube video IDs ONLY for exact, known popular titles
+const CURATED_YOUTUBE_VIDEOS: Record<string, { id: string; title: string }> = {
+  pasoori: { id: '5Eqb_-j3FDA', title: 'Pasoori - Ali Sethi & Shae Gill (Coke Studio)' },
+  'ali sethi': { id: '5Eqb_-j3FDA', title: 'Pasoori - Ali Sethi & Shae Gill' },
+  'coke studio': { id: 'JFcgOboErgk', title: 'Coke Studio Season Hits' },
+  'cokestudio': { id: 'JFcgOboErgk', title: 'Coke Studio Season Hits' },
+  'lofi': { id: 'jfKfPfyJRdk', title: 'Lofi Hip Hop Radio' },
+  'lo-fi': { id: 'jfKfPfyJRdk', title: 'Lofi Hip Hop Radio' },
 };
 
 export interface ParseResult {
@@ -77,6 +70,7 @@ export interface ParseResult {
   target?: string;
   query?: string;
   videoId?: string;
+  isExactMatch?: boolean;
   spokenFeedback: string;
   actionCard?: ExecutedAction;
 }
@@ -88,13 +82,11 @@ export async function processVoiceCommand(
   const text = rawTranscript.trim();
   const lower = text.toLowerCase();
 
-  // Detect script language: Urdu, Hindi, or Latin
   const isUrduScript = /[\u0600-\u06FF]/.test(text);
   const isHindiScript = /[\u0900-\u097F]/.test(text);
 
-  // 1. CHECK FOR YOUTUBE / MUSIC COMMANDS (English, Urdu script, Hindi script, Roman Urdu)
+  // 1. YOUTUBE COMMAND IDENTIFICATION
   const isYouTubeCommand =
-    // English & Roman
     lower.includes('youtube') ||
     lower.startsWith('play ') ||
     lower.includes('play song') ||
@@ -104,7 +96,6 @@ export async function processVoiceCommand(
     lower.includes('gana play') ||
     lower.includes('bajao') ||
     lower.includes('sunao') ||
-    // Urdu Script
     text.includes('یوٹیوب') ||
     text.includes('یو ٹیوب') ||
     text.includes('گانا') ||
@@ -115,15 +106,10 @@ export async function processVoiceCommand(
     text.includes('چلاو') ||
     text.includes('بجاؤ') ||
     text.includes('سناؤ') ||
-    // Hindi Script
     text.includes('यूट्यूब') ||
     text.includes('गाना') ||
-    text.includes('गीत') ||
-    text.includes('बजाओ') ||
-    text.includes('सुनाओ') ||
-    text.includes('चलाओ');
+    text.includes('गीत');
 
-  // Verify if it's music/youtube intent
   if (
     isYouTubeCommand &&
     !lower.includes('chrome') &&
@@ -170,48 +156,65 @@ export async function processVoiceCommand(
       .trim();
 
     if (!cleanQuery) {
-      cleanQuery = isUrduScript ? 'پاسوری کوک اسٹوڈیو' : 'Pasoori Coke Studio';
+      cleanQuery = isUrduScript ? 'پاسوری' : 'Pasoori';
     }
 
-    // Check if query matches any curated song
     const queryLower = cleanQuery.toLowerCase();
-    let matchedVideoId = '5Eqb_-j3FDA'; // Default to Pasoori
-    for (const [key, id] of Object.entries(CURATED_YOUTUBE_VIDEOS)) {
+    let exactVideoId: string | undefined = undefined;
+    let exactTitle: string | undefined = undefined;
+
+    for (const [key, item] of Object.entries(CURATED_YOUTUBE_VIDEOS)) {
       if (queryLower.includes(key)) {
-        matchedVideoId = id;
+        exactVideoId = item.id;
+        exactTitle = item.title;
         break;
       }
     }
 
-    const spokenFeedback = isUrduScript
-      ? `یوٹیوب پر ${cleanQuery} چلایا جا رہا ہے!`
-      : isHindiScript
-      ? `यूट्यूब पर ${cleanQuery} चलाया जा रहा है!`
-      : `Playing ${cleanQuery} on YouTube.`;
+    const isExact = Boolean(exactVideoId);
+    const targetUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+
+    // Try to open YouTube search immediately in new tab for user
+    try {
+      window.open(targetUrl, '_blank');
+    } catch (e) {
+      // browser popup might be blocked; UI action card provides button
+    }
+
+    const spokenFeedback = isExact
+      ? isUrduScript
+        ? `یوٹیوب پر "${exactTitle}" چلایا جا رہا ہے!`
+        : `Playing "${exactTitle}" on YouTube.`
+      : isUrduScript
+      ? `یوٹیوب پر "${cleanQuery}" تلاش کر کے نتائج کھولے جا رہے ہیں!`
+      : `Searching YouTube for "${cleanQuery}" and opening search results.`;
 
     const actionCard: ExecutedAction = {
       id: crypto.randomUUID(),
       timestamp: Date.now(),
       type: 'youtube',
-      title: `YouTube: ${cleanQuery}`,
-      details: isUrduScript
-        ? `یوٹیوب پلیئر میں گانا پلے ہو رہا ہے۔`
-        : `Streaming "${cleanQuery}" via Hammad AI Theater Player`,
+      title: isExact ? `YouTube: ${exactTitle}` : `YouTube Search: "${cleanQuery}"`,
+      details: isExact
+        ? `Matched official video. Playing in Hammad AI Theater Player.`
+        : `Opened YouTube search results for "${cleanQuery}". Click button to view in YouTube.`,
       status: 'success',
-      url: `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`,
-      youtubeVideoId: matchedVideoId,
+      url: targetUrl,
+      youtubeVideoId: exactVideoId,
     };
 
     return {
       intent: 'youtube',
       query: cleanQuery,
-      videoId: matchedVideoId,
+      videoId: exactVideoId,
+      isExactMatch: isExact,
       spokenFeedback,
       actionCard,
     };
   }
 
-  // 2. CHECK FOR APPLICATION LAUNCH COMMANDS
+  // 2. CHECK FOR APPLICATION LAUNCH COMMANDS WITH HONEST STATUS REPORTING
+  const bridgeActive = isDesktopBridgeActive();
+
   // A. GOOGLE CHROME
   const isChromeCommand =
     lower.includes('chrome') ||
@@ -223,30 +226,40 @@ export async function processVoiceCommand(
     text.includes('क्रोम');
 
   if (isChromeCommand) {
-    const bridgeSent = sendCommandToBridge({ action: 'launch', app: 'chrome' });
+    let bridgeSent = false;
+    if (bridgeActive) {
+      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'chrome' });
+    }
 
-    // Open URL directly as well
+    // Always attempt web trigger as fallback
     try {
       window.open('https://www.google.com', '_blank');
     } catch (e) {
       // ignore
     }
 
-    const spokenFeedback = isUrduScript
-      ? 'گوگل کروم کھولا جا رہا ہے!'
-      : isHindiScript
-      ? 'गूगल क्रोम खोला जा रहा है!'
-      : 'Launching Google Chrome on your computer.';
+    let spokenFeedback = '';
+    let detailsMessage = '';
+
+    if (bridgeSent) {
+      spokenFeedback = isUrduScript
+        ? 'لوکل برج کے ذریعے آپ کے لیپ ٹاپ پر گوگل کروم چلایا جا رہا ہے!'
+        : 'Launching Google Chrome native process on your laptop via Desktop Bridge.';
+      detailsMessage = 'Native Google Chrome process launched via Desktop Bridge (ws://localhost:8765).';
+    } else {
+      spokenFeedback = isUrduScript
+        ? 'لوکل برج کنیکٹ نہیں ہے، اس لیے براؤزر میں گوگل کھولا گیا ہے۔ لیپ ٹاپ کی اصل ایپ چلانے کے لیے python hammad_bridge.py چلائیں۔'
+        : 'Desktop Bridge is offline. Opened Google in a new browser tab. Run "python hammad_bridge.py" to launch the native app on your laptop.';
+      detailsMessage = 'Web tab opened. Native desktop process was NOT launched because Desktop Bridge is offline.';
+    }
 
     const actionCard: ExecutedAction = {
       id: crypto.randomUUID(),
       timestamp: Date.now(),
       type: 'app',
-      title: 'Google Chrome',
-      details: bridgeSent
-        ? 'Native Google Chrome launched on your laptop via Local Bridge.'
-        : 'Google Chrome launched. Run Laptop Bridge for direct native OS process control.',
-      status: 'success',
+      title: bridgeSent ? 'Google Chrome (Native App)' : 'Google (Web Fallback)',
+      details: detailsMessage,
+      status: bridgeSent ? 'success' : 'info',
       url: 'https://www.google.com',
     };
 
@@ -267,27 +280,36 @@ export async function processVoiceCommand(
     text.includes('اینڈروئیڈ اسٹوڈیو') ||
     text.includes('اینڈرائیڈ') ||
     text.includes('اینڈروئیڈ') ||
-    text.includes('एंड्रॉयड स्टूडियो') ||
-    text.includes('एंड्रॉयड');
+    text.includes('एंड्रॉयड स्टूडियो');
 
   if (isAndroidStudioCommand) {
-    const bridgeSent = sendCommandToBridge({ action: 'launch', app: 'android-studio' });
+    let bridgeSent = false;
+    if (bridgeActive) {
+      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'android-studio' });
+    }
 
-    const spokenFeedback = isUrduScript
-      ? 'اینڈرائیڈ اسٹوڈیو لانچ کیا جا رہا ہے!'
-      : isHindiScript
-      ? 'एंड्रॉयड स्टूडियो लॉन्च किया जा रहा है!'
-      : 'Launching Android Studio on your laptop.';
+    let spokenFeedback = '';
+    let detailsMessage = '';
+
+    if (bridgeSent) {
+      spokenFeedback = isUrduScript
+        ? 'لوکل برج کے ذریعے آپ کے لیپ ٹاپ پر اینڈرائیڈ اسٹوڈیو چلایا جا رہا ہے!'
+        : 'Launching Android Studio native app on your laptop via Desktop Bridge.';
+      detailsMessage = 'Native Android Studio (studio64.exe) launch signal dispatched via Desktop Bridge.';
+    } else {
+      spokenFeedback = isUrduScript
+        ? 'اینڈرائیڈ اسٹوڈیو چلانے کے لیے لوکل برج کنیکٹ کریں۔ ٹرمینل میں python hammad_bridge.py رن کریں۔'
+        : 'Desktop Bridge is offline. To launch Android Studio on your laptop, start python hammad_bridge.py in your terminal.';
+      detailsMessage = 'Desktop Bridge (ws://localhost:8765) is offline. Android Studio requires the companion bridge to start on Windows/Mac.';
+    }
 
     const actionCard: ExecutedAction = {
       id: crypto.randomUUID(),
       timestamp: Date.now(),
       type: 'app',
-      title: 'Android Studio',
-      details: bridgeSent
-        ? 'Native Android Studio launched on your laptop via Local Bridge.'
-        : 'Launch signal sent for Android Studio (studio64.exe). Run Laptop Bridge for direct OS execution.',
-      status: 'success',
+      title: bridgeSent ? 'Android Studio (Native App)' : 'Android Studio (Bridge Required)',
+      details: detailsMessage,
+      status: bridgeSent ? 'success' : 'info',
       url: 'https://developer.android.com/studio',
     };
 
@@ -303,13 +325,14 @@ export async function processVoiceCommand(
   const isVsCodeCommand =
     lower.includes('vs code') ||
     lower.includes('vscode') ||
-    lower.includes('code editor') ||
     text.includes('وی ایس کوڈ') ||
-    text.includes('کوڈ') ||
-    text.includes('वीएस कोड');
+    text.includes('کوڈ');
 
   if (isVsCodeCommand) {
-    const bridgeSent = sendCommandToBridge({ action: 'launch', app: 'vscode' });
+    let bridgeSent = false;
+    if (bridgeActive) {
+      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'vscode' });
+    }
 
     try {
       window.open('vscode://', '_self');
@@ -317,27 +340,27 @@ export async function processVoiceCommand(
       // ignore
     }
 
-    const spokenFeedback = isUrduScript
-      ? 'ویژول اسٹوڈیو کوڈ کھولا جا رہا ہے!'
-      : 'Opening Visual Studio Code.';
-
-    const actionCard: ExecutedAction = {
-      id: crypto.randomUUID(),
-      timestamp: Date.now(),
-      type: 'app',
-      title: 'Visual Studio Code',
-      details: bridgeSent
-        ? 'Native VS Code launched on laptop.'
-        : 'Opened vscode:// scheme. Run Laptop Bridge for direct OS launching.',
-      status: 'success',
-      url: 'vscode://',
-    };
+    const spokenFeedback = bridgeSent
+      ? isUrduScript
+        ? 'لوکل برج کے ذریعے وی ایس کوڈ چلایا جا رہا ہے!'
+        : 'Launching Visual Studio Code on your laptop.'
+      : isUrduScript
+      ? 'وی ایس کوڈ کا پروٹوکول اوپن کیا گیا ہے۔ مکمل لانچ کے لیے لوکل برج چلائیں۔'
+      : 'Triggered vscode:// protocol. For direct executable launch, connect Desktop Bridge.';
 
     return {
       intent: 'app_launch',
       target: 'vscode',
       spokenFeedback,
-      actionCard,
+      actionCard: {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        type: 'app',
+        title: 'Visual Studio Code',
+        details: bridgeSent ? 'Dispatched native code launch.' : 'Triggered vscode:// scheme. Bridge is offline.',
+        status: bridgeSent ? 'success' : 'info',
+        url: 'vscode://',
+      },
     };
   }
 
@@ -345,13 +368,21 @@ export async function processVoiceCommand(
   const isCalcCommand =
     lower.includes('calc') ||
     lower.includes('calculator') ||
-    text.includes('کیلکولیٹر') ||
-    text.includes('कैलकुलेटर');
+    text.includes('کیلکولیٹر');
 
   if (isCalcCommand) {
-    sendCommandToBridge({ action: 'launch', app: 'calculator' });
+    let bridgeSent = false;
+    if (bridgeActive) {
+      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'calculator' });
+    }
 
-    const spokenFeedback = isUrduScript ? 'کیلکولیٹر کھولا جا رہا ہے!' : 'Opening Calculator.';
+    const spokenFeedback = bridgeSent
+      ? isUrduScript
+        ? 'کیلکولیٹر کھولا جا رہا ہے!'
+        : 'Opening Calculator on your laptop.'
+      : isUrduScript
+      ? 'کیلکولیٹر چلانے کے لیے لوکل برج کنیکٹ کریں۔'
+      : 'Calculator requires the local bridge to open on Windows/Mac.';
 
     return {
       intent: 'app_launch',
@@ -362,18 +393,18 @@ export async function processVoiceCommand(
         timestamp: Date.now(),
         type: 'app',
         title: 'Calculator',
-        details: 'Calculator application triggered on laptop.',
-        status: 'success',
+        details: bridgeSent ? 'Launched native calculator.' : 'Desktop Bridge offline; run python hammad_bridge.py to start local tools.',
+        status: bridgeSent ? 'success' : 'info',
       },
     };
   }
 
-  // 3. GENERAL AI QUESTION & ANSWER (Gemini 2.5)
+  // 3. GENERAL AI QUESTION & ANSWER (Gemini 2.5 with transparent fallback)
   try {
     const promptInstruction = isUrduScript
       ? 'آپ حماد اے آئی کے وائس اسسٹنٹ ہیں۔ صارف کے سوال کا جواب اردو میں شستہ، براہِ راست، درست اور قدرتی آواز میں 1 سے 2 جملوں میں دیں۔'
       : isHindiScript
-      ? 'आप हम्माद एआई वॉयस असिस्टेंट हैं। पूछे गए सवाल का सटीक, विनम्र और संक्षिप्त (1-2 वाक्यों में) जवाब हिन्दी में दें।'
+      ? 'आप हम्माद एआई वॉयس असिस्टेंट हैं। पूछे गए सवाल का सटीक, विनम्र और संक्षिप्त (1-2 वाक्यों में) जवाब हिन्दी में दें।'
       : 'You are Hammad AI Voice Assistant. Answer the question accurately, naturally, and concisely (1-2 sentences) in a polite, engaging tone.';
 
     const aiResponse = await sendChatMessage({
@@ -402,7 +433,7 @@ export async function processVoiceCommand(
   } catch (err: any) {
     const fallbackReply = isUrduScript
       ? `میں نے آپ کی بات سن لی ہے: "${text}"۔ میں کروم، اینڈرائیڈ اسٹوڈیو، یا یوٹیوب پر گانے چلا سکتا ہوں۔`
-      : `I heard: "${text}". I can launch Chrome, Android Studio, or play any song on YouTube for you!`;
+      : `I heard: "${text}". I can launch Chrome, Android Studio, or search YouTube for you!`;
 
     return {
       intent: 'question_answer',

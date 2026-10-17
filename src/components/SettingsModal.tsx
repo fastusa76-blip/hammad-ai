@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { AppSettings } from '../types';
-import { X, Key, Cpu, Trash2, CheckCircle2, Mic, Volume2 } from 'lucide-react';
+import { X, Key, Cpu, Trash2, CheckCircle2, Mic, Volume2, Sparkles, AlertTriangle, RefreshCw } from 'lucide-react';
+import { testGeminiDiagnostic } from '../lib/api';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -17,10 +18,35 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateSettings,
   serverStatus,
 }) => {
+  const [testingGemini, setTestingGemini] = useState(false);
+  const [geminiTestResult, setGeminiTestResult] = useState<{
+    status: 'connected' | 'error' | 'missing_key';
+    message?: string;
+    errorMessage?: string;
+    latencyMs?: number;
+    model?: string;
+  } | null>(null);
+
   if (!isOpen) return null;
 
+  const handleTestGemini = async () => {
+    setTestingGemini(true);
+    setGeminiTestResult(null);
+    try {
+      const result = await testGeminiDiagnostic(settings.apiKey);
+      setGeminiTestResult(result);
+    } catch (err: any) {
+      setGeminiTestResult({
+        status: 'error',
+        errorMessage: err.message || 'Diagnostic request failed',
+      });
+    } finally {
+      setTestingGemini(false);
+    }
+  };
+
   const handleClearLocalStorage = () => {
-    if (confirm('Clear all local conversations and preferences?')) {
+    if (confirm('تمام گفتگو اور سیٹنگز کو ری سیٹ کریں؟ (Clear all local conversations and preferences?)')) {
       localStorage.clear();
       window.location.reload();
     }
@@ -32,10 +58,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Header */}
         <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <span className="p-1 rounded-lg bg-indigo-600/20 text-indigo-400">
+            <span className="p-1.5 rounded-lg bg-indigo-600/20 text-indigo-400">
               <Key className="w-4 h-4" />
             </span>
-            <h2 className="font-bold text-sm text-slate-100">Platform Settings</h2>
+            <h2 className="font-bold text-sm text-slate-100">Platform & API Diagnostics</h2>
           </div>
           <button
             onClick={onClose}
@@ -48,7 +74,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* Content */}
         <div className="p-5 space-y-4 text-xs">
           {/* Server status alert */}
-          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-1.5">
+          <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2">
             <div className="flex items-center justify-between font-semibold">
               <span className="text-slate-300">Backend Server Status</span>
               <span className="flex items-center gap-1.5 text-emerald-400 text-[11px]">
@@ -56,18 +82,48 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 Connected (Port 3000)
               </span>
             </div>
-            <div className="text-[11px] text-slate-400">
-              {serverStatus.geminiConfigured ? (
-                <span className="text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  Environment GEMINI_API_KEY detected and active.
-                </span>
-              ) : (
-                <span className="text-amber-400">
-                  No server GEMINI_API_KEY detected. Running with built-in reasoning engine. You can provide a key below.
-                </span>
-              )}
+
+            <div className="flex items-center justify-between pt-1">
+              <span className="text-slate-400 text-[11px]">Gemini 2.5 API Connection:</span>
+              <button
+                onClick={handleTestGemini}
+                disabled={testingGemini}
+                className="px-2.5 py-1 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/40 text-[11px] font-medium flex items-center gap-1 transition-colors disabled:opacity-40"
+              >
+                <RefreshCw className={`w-3 h-3 ${testingGemini ? 'animate-spin' : ''}`} />
+                <span>{testingGemini ? 'Testing...' : 'Test Connection'}</span>
+              </button>
             </div>
+
+            {/* Test result diagnosis */}
+            {geminiTestResult && (
+              <div
+                className={`p-2.5 rounded-lg border text-[11px] mt-2 ${
+                  geminiTestResult.status === 'connected'
+                    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                    : 'bg-rose-500/10 border-rose-500/30 text-rose-300'
+                }`}
+              >
+                {geminiTestResult.status === 'connected' ? (
+                  <div className="flex items-center gap-1.5 font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    <span>
+                      Gemini API Active! ({geminiTestResult.model}, {geminiTestResult.latencyMs}ms)
+                    </span>
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-1.5 font-bold">
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+                      <span>Gemini API Error:</span>
+                    </div>
+                    <div className="text-[10px] text-rose-200 font-mono break-all">
+                      {geminiTestResult.errorMessage || geminiTestResult.message}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Voice Language Preference */}
@@ -107,7 +163,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           {/* Custom API Key input */}
           <div>
             <label className="block text-slate-300 font-semibold mb-1">
-              Custom Gemini API Key (Optional)
+              Custom Gemini API Key Override (Optional)
             </label>
             <input
               type="password"
@@ -117,26 +173,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 placeholder-slate-600 focus:outline-none focus:border-indigo-500 font-mono text-xs"
             />
             <p className="text-[10px] text-slate-500 mt-1">
-              Key is stored client-side in your browser for testing and requests.
+              Never exposed to the public. Stored only in your local browser storage.
             </p>
-          </div>
-
-          {/* Default Model */}
-          <div>
-            <label className="block text-slate-300 font-semibold mb-1">Default Model</label>
-            <select
-              value={settings.defaultModel}
-              onChange={(e) => onUpdateSettings({ ...settings, defaultModel: e.target.value })}
-              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500 text-xs"
-            >
-              <option value="gemini-2.5-flash">Gemini 2.5 Flash (Recommended - Low Latency)</option>
-              <option value="gemini-2.5-pro">Gemini 2.5 Pro (Deep Code & Reasoning)</option>
-            </select>
           </div>
 
           {/* Reset Storage */}
           <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-            <span className="text-slate-400">Clear Cache & Chats</span>
+            <span className="text-slate-400">Clear Cache & Reset</span>
             <button
               onClick={handleClearLocalStorage}
               className="px-2.5 py-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 text-xs font-medium flex items-center gap-1.5 transition-colors"

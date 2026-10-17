@@ -1,10 +1,11 @@
-// Web Speech API wrapper for Recognition & Synthesis with robust permission handling
+// Web Speech API wrapper and Audio Visualizer for robust microphone handling
 
 declare global {
   interface Window {
     SpeechRecognition: any;
     webkitSpeechRecognition: any;
     __currentUtterance?: SpeechSynthesisUtterance;
+    webkitAudioContext: typeof AudioContext;
   }
 }
 
@@ -18,61 +19,110 @@ export function isSpeechSynthesisSupported(): boolean {
   return 'speechSynthesis' in window;
 }
 
-/**
- * Explicitly request microphone stream from user to trigger browser permission dialog
- */
-export async function requestMicrophoneAccess(): Promise<{ granted: boolean; error?: string }> {
-  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    return {
-      granted: false,
-      error: 'Media devices API is not supported in this browser environment.'
-    };
-  }
+// Live Audio Meter using Web Audio API
+let activeAudioStream: MediaStream | null = null;
+let audioContext: AudioContext | null = null;
+let analyser: AnalyserNode | null = null;
+let meterAnimationId: number | null = null;
 
+export async function startAudioLevelMeter(
+  onLevelChange: (levelPercent: number) => void
+): Promise<{ success: boolean; error?: string }> {
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    // Stop all audio tracks immediately once permission is verified
-    stream.getTracks().forEach((track) => track.stop());
-    return { granted: true };
-  } catch (err: any) {
-    console.warn('Microphone permission error:', err);
-    let msg = 'Microphone access denied.';
-    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-      msg = 'Microphone permission was denied. Please allow microphone access in your browser address bar.';
-    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-      msg = 'No microphone device was found on this computer.';
-    } else if (err.name === 'NotReadableError') {
-      msg = 'Microphone hardware is currently in use by another application.';
+    stopAudioLevelMeter();
+
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return { success: false, error: 'MediaDevices API not supported in this browser.' };
     }
-    return { granted: false, error: msg };
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    activeAudioStream = stream;
+
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    audioContext = new AudioCtx();
+    const source = audioContext.createMediaStreamSource(stream);
+
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+
+    const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+    const checkLevel = () => {
+      if (!analyser) return;
+      analyser.getByteFrequencyData(dataArray);
+
+      let sum = 0;
+      for (let i = 0; i < dataArray.length; i++) {
+        sum += dataArray[i];
+      }
+      const avg = sum / dataArray.length;
+      const percent = Math.min(100, Math.round((avg / 128) * 100));
+
+      onLevelChange(percent);
+      meterAnimationId = requestAnimationFrame(checkLevel);
+    };
+
+    checkLevel();
+    return { success: true };
+  } catch (err: any) {
+    console.warn('Could not start audio level meter:', err);
+    let errorMsg = 'Microphone permission denied or hardware unavailable.';
+    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      errorMsg = 'Microphone access blocked. Click lock icon in browser URL bar to allow.';
+    }
+    return { success: false, error: errorMsg };
   }
 }
 
+export function stopAudioLevelMeter() {
+  if (meterAnimationId) {
+    cancelAnimationFrame(meterAnimationId);
+    meterAnimationId = null;
+  }
+  if (activeAudioStream) {
+    activeAudioStream.getTracks().forEach((track) => track.stop());
+    activeAudioStream = null;
+  }
+  if (audioContext && audioContext.state !== 'closed') {
+    audioContext.close().catch(() => {});
+    audioContext = null;
+  }
+  analyser = null;
+}
+
 let activeRecognition: any = null;
-let keepListeningLoop = false;
+let isUserListeningActive = false;
 
 export function startSpeechRecognition({
   language = 'ur-PK',
+  onListeningStateChange,
   onResult,
   onInterim,
   onError,
   onEnd,
 }: {
   language?: string;
+  onListeningStateChange?: (active: boolean) => void;
   onResult: (finalTranscript: string) => void;
   onInterim?: (interimTranscript: string) => void;
-  onError?: (errorMessage: string) => void;
+  onError?: (errorDetails: { code: string; message: string }) => void;
   onEnd?: () => void;
 }) {
   stopSpeechRecognition();
 
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRec) {
-    if (onError) onError('Speech Recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
+    if (onError) {
+      onError({
+        code: 'not_supported',
+        message: 'Speech Recognition is not supported by your browser engine. Use Chrome, Edge, or use text commands below.',
+      });
+    }
     return null;
   }
 
-  keepListeningLoop = true;
+  isUserListeningActive = true;
 
   try {
     const recognition = new SpeechRec();
@@ -80,6 +130,10 @@ export function startSpeechRecognition({
     recognition.interimResults = true;
     recognition.lang = language;
     recognition.maxAlternatives = 1;
+
+    recognition.onstart = () => {
+      if (onListeningStateChange) onListeningStateChange(true);
+    };
 
     recognition.onresult = (event: any) => {
       let interim = '';
@@ -107,33 +161,37 @@ export function startSpeechRecognition({
       console.warn('Speech recognition error event:', err);
 
       if (err === 'no-speech') {
-        // Normal silence timeout; do not terminate if user intends continuous listening
+        // Normal silence timeout; ignore and continue if user hasn't explicitly stopped
         return;
       }
 
-      let errorExplanation = `Voice error: ${err}`;
+      let errorMsg = `Voice Recognition error: ${err}`;
       if (err === 'not-allowed' || err === 'service-not-allowed') {
-        errorExplanation = 'Microphone blocked. Please click the lock or settings icon in your browser address bar and choose "Allow" for Microphone.';
-        keepListeningLoop = false;
+        errorMsg = 'Microphone permission blocked. Please click the lock or settings icon in your browser address bar and select "Allow" for Microphone.';
+        isUserListeningActive = false;
       } else if (err === 'audio-capture') {
-        errorExplanation = 'No microphone detected. Please check your mic connection.';
-        keepListeningLoop = false;
+        errorMsg = 'No audio detected. Please check if your microphone is plugged in and unmuted.';
+        isUserListeningActive = false;
       } else if (err === 'network') {
-        errorExplanation = 'Speech recognition network error. Please verify internet connection.';
+        errorMsg = 'Speech network connectivity error. Please ensure internet access is active.';
       }
 
-      if (onError) onError(errorExplanation);
+      if (onError) {
+        onError({ code: err, message: errorMsg });
+      }
     };
 
     recognition.onend = () => {
-      if (keepListeningLoop) {
+      // Auto restart if user intended continuous listening and it wasn't a hard permission block
+      if (isUserListeningActive) {
         try {
           recognition.start();
           return;
         } catch (e) {
-          // ignore restart collision
+          // Restart collision; proceed to cleanup
         }
       }
+      if (onListeningStateChange) onListeningStateChange(false);
       if (onEnd) onEnd();
     };
 
@@ -141,14 +199,20 @@ export function startSpeechRecognition({
     activeRecognition = recognition;
     return recognition;
   } catch (err: any) {
-    console.error('Failed to instantiate speech recognition:', err);
-    if (onError) onError(err.message || 'Failed to initialize microphone recognition.');
+    isUserListeningActive = false;
+    console.error('Failed to start speech recognition:', err);
+    if (onError) {
+      onError({
+        code: 'init_error',
+        message: err.message || 'Could not initialize speech recognition. Check browser permissions.',
+      });
+    }
     return null;
   }
 }
 
 export function stopSpeechRecognition() {
-  keepListeningLoop = false;
+  isUserListeningActive = false;
   if (activeRecognition) {
     try {
       activeRecognition.stop();
@@ -178,7 +242,6 @@ export function speakText({
 
   stopSpeaking();
 
-  // Strip markdown formatting before speaking
   const cleanText = text
     .replace(/[#*_`~\[\]\(\)>]/g, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
@@ -192,7 +255,6 @@ export function speakText({
   utterance.rate = rate;
   utterance.pitch = pitch;
 
-  // Auto-detect Urdu or Hindi text to choose suitable voice if available
   const hasUrdu = /[\u0600-\u06FF]/.test(cleanText);
   const hasHindi = /[\u0900-\u097F]/.test(cleanText);
 
@@ -229,7 +291,6 @@ export function speakText({
     if (onEnd) onEnd();
   };
 
-  // Keep reference on window to prevent Chrome garbage collector bug
   window.__currentUtterance = utterance;
   window.speechSynthesis.speak(utterance);
 }

@@ -13,9 +13,10 @@ const HOST = '0.0.0.0';
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-// Helper to get GoogleGenAI client if key exists
-function getGeminiClient(customKey?: string) {
-  const key = customKey || process.env.GEMINI_API_KEY;
+// Helper to get GoogleGenAI client (prefers server environment key for security)
+function getGeminiClient(clientOverrideKey?: string) {
+  // Use client key only if provided and valid, otherwise fallback to server environment
+  const key = clientOverrideKey?.trim() || process.env.GEMINI_API_KEY;
   if (!key) return null;
   return new GoogleGenAI({ apiKey: key });
 }
@@ -30,7 +31,49 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Chat completion endpoint
+// Dedicated Gemini connection & quota diagnostic endpoint (Exposes real error messages!)
+app.get('/api/gemini/test', async (req: Request, res: Response) => {
+  const clientKey = req.query.apiKey as string | undefined;
+  const keyToUse = clientKey?.trim() || process.env.GEMINI_API_KEY;
+
+  if (!keyToUse) {
+    return res.json({
+      configured: false,
+      status: 'missing_key',
+      message: 'GEMINI_API_KEY is not configured in server environment or request.'
+    });
+  }
+
+  const startTime = Date.now();
+  try {
+    const ai = new GoogleGenAI({ apiKey: keyToUse });
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: [{ role: 'user', parts: [{ text: 'Respond with the word "CONNECTED"' }] }],
+    });
+
+    const latencyMs = Date.now() - startTime;
+    return res.json({
+      configured: true,
+      status: 'connected',
+      model: 'gemini-2.5-flash',
+      latencyMs,
+      response: response.text?.trim() || 'CONNECTED',
+      source: clientKey ? 'client-key' : 'server-env'
+    });
+  } catch (err: any) {
+    console.error('[Gemini Diagnostic Error]:', err);
+    return res.status(200).json({
+      configured: true,
+      status: 'error',
+      errorMessage: err.message || 'Gemini API call failed',
+      errorCode: err.status || err.code || 'API_FAILURE',
+      errorDetails: err.toString()
+    });
+  }
+});
+
+// Chat completion endpoint with transparent error reporting
 app.post('/api/chat', async (req: Request, res: Response) => {
   try {
     const { messages, systemInstruction, model = 'gemini-2.5-flash', temperature = 0.7, apiKey } = req.body;
@@ -40,10 +83,10 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     }
 
     const ai = getGeminiClient(apiKey);
+    let capturedGeminiError: { message: string; code?: string } | null = null;
 
     if (ai) {
       try {
-        // Format messages for @google/genai
         const contents = messages.map((m: { role: string; content: string }) => ({
           role: m.role === 'assistant' ? 'model' : 'user',
           parts: [{ text: m.content }]
@@ -61,27 +104,35 @@ app.post('/api/chat', async (req: Request, res: Response) => {
         const replyText = response.text || '';
         return res.json({ text: replyText, model, source: 'gemini' });
       } catch (geminiError: any) {
-        console.warn('Gemini API call failed, falling back to smart engine:', geminiError?.message || geminiError);
+        console.error('[Gemini API Call Error]:', geminiError);
+        capturedGeminiError = {
+          message: geminiError?.message || 'Gemini API call failed',
+          code: geminiError?.status || geminiError?.code || 'GEMINI_ERROR'
+        };
       }
     }
 
-    // High quality intelligent fallback if API key is not configured or call fails
+    // High quality intelligent fallback if API key is missing or call failed
     const lastMessage = messages[messages.length - 1]?.content || '';
     const fallbackResponse = generateSmartFallbackReply(lastMessage, systemInstruction, messages.length);
+
     return res.json({
       text: fallbackResponse,
-      model: `${model} (Sandbox Mode)`,
+      model: `${model} (Sandbox Fallback)`,
       source: 'offline-agent',
-      note: 'Using Hammad AI local reasoning engine. Set GEMINI_API_KEY in environment or settings for live Gemini 2.5 API access.'
+      geminiError: capturedGeminiError,
+      note: capturedGeminiError
+        ? `Gemini Error: ${capturedGeminiError.message}. Using Hammad AI local reasoning fallback.`
+        : 'Using Hammad AI local reasoning engine. Provide GEMINI_API_KEY for live Gemini 2.5 API.'
     });
 
   } catch (error: any) {
-    console.error('Chat error:', error);
+    console.error('Chat endpoint error:', error);
     res.status(500).json({ error: error.message || 'Internal server error' });
   }
 });
 
-// Prompt Enhancer Endpoint
+// Prompt Enhancer Endpoint with transparent errors
 app.post('/api/enhance-prompt', async (req: Request, res: Response) => {
   try {
     const { prompt, focus = 'General Optimization', targetModel = 'Gemini 2.5', apiKey } = req.body;
@@ -92,7 +143,7 @@ app.post('/api/enhance-prompt', async (req: Request, res: Response) => {
 
     const ai = getGeminiClient(apiKey);
     const enhancementSystemPrompt = `You are Hammad AI's world-class Prompt Engineering specialist.
-Your job is to transform raw, loose user prompts into production-grade prompts using rigorous prompt architecture:
+Your job is to transform raw user prompts into production-grade prompts using rigorous prompt architecture:
 1. Clear System Persona & Role
 2. Precise Objective & Context
 3. Structured Constraints & Guardrails
@@ -133,7 +184,7 @@ Respond strictly in valid JSON format with keys:
         const parsed = JSON.parse(raw);
         return res.json(parsed);
       } catch (err: any) {
-        console.warn('Gemini prompt enhancement fallback:', err.message);
+        console.warn('Gemini prompt enhancement error:', err.message);
       }
     }
 
@@ -153,7 +204,6 @@ app.post('/api/run-flow-step', async (req: Request, res: Response) => {
     const { stepTitle, prompt, inputs = {}, apiKey } = req.body;
     let resolvedPrompt = prompt;
 
-    // Replace inputs in format {{key}}
     Object.entries(inputs).forEach(([k, v]) => {
       const regex = new RegExp(`{{${k}}}`, 'g');
       resolvedPrompt = resolvedPrompt.replace(regex, String(v));
@@ -177,7 +227,6 @@ app.post('/api/run-flow-step', async (req: Request, res: Response) => {
       }
     }
 
-    // Simulated flow execution output
     const output = generateFlowStepOutput(stepTitle, resolvedPrompt);
     return res.json({
       stepTitle,
@@ -217,7 +266,7 @@ Format cleanly in Markdown with bold headers and actionable scene breakdowns.`;
         });
         return res.json({ script: response.text || '', source: 'gemini' });
       } catch (err: any) {
-        console.warn('Script generation fallback:', err.message);
+        console.warn('Script generation error:', err.message);
       }
     }
 
@@ -229,7 +278,7 @@ Format cleanly in Markdown with bold headers and actionable scene breakdowns.`;
   }
 });
 
-// Smart Fallback Generators for robust offline/sandbox preview
+// Smart Fallback Generators for robust multilingual offline preview
 function generateSmartFallbackReply(prompt: string, systemInstruction?: string, messageCount = 1): string {
   const p = prompt.toLowerCase();
   const hasUrdu = /[\u0600-\u06FF]/.test(prompt);
@@ -247,9 +296,6 @@ function generateSmartFallbackReply(prompt: string, systemInstruction?: string, 
     }
     if (prompt.includes('انٹیلیجنس') || prompt.includes('اے آئی') || prompt.includes('مصنوعی ذہانت')) {
       return 'آرٹیفیشل انٹیلیجنس کمپیوٹرز کی وہ ذہانت ہے جس کے ذریعے وہ انسانی عقل کی طرح سوچنے، سیکھنے اور فیصلہ کرنے کے قابل بنتے ہیں۔';
-    }
-    if (prompt.includes('کروم') || prompt.includes('اینڈرائیڈ') || prompt.includes('ایپ')) {
-      return 'جی بالکل، آپ "کروم چلاؤ" یا "اینڈرائیڈ اسٹوڈیو کھولو" کہیں، میں فوراً آپ کے لیپ ٹاپ پر یہ ایپس چلا دوں گا۔';
     }
     return `آپ کا سوال موصول ہو گیا ہے: "${prompt.slice(0, 60)}"۔ میں حماد اے آئی اسسٹنٹ کے طور پر آپ کی ہر وائس کمانڈ پر عمل کرنے کے لیے تیار ہوں۔`;
   }
@@ -276,71 +322,12 @@ I am ready to assist you across all our core capabilities:
 How can I accelerate your project today?`;
   }
 
-  if (p.includes('prompt') || p.includes('engineer')) {
-    return `### Hammad AI Prompt Optimization Analysis
-
-To achieve optimal model output, consider structuring your prompt with this 5-part architecture:
-
-1. **Role Definition**: Specify seniority and domain expertise (e.g. *Principal Cloud Architect*).
-2. **Context & Objective**: Define the business or technical outcome clearly.
-3. **Guardrails & Constraints**: State what NOT to do (e.g., *no placeholders, maximum 3 paragraphs*).
-4. **Input Syntax**: Pass input payloads in markdown blocks or labeled variables.
-5. **Output Schema**: Require JSON, bulleted tables, or step-by-step breakdown.
-
-Try jumping to our **Prompt Studio** tab above to automatically transform and benchmark any prompt with one click!`;
-  }
-
-  if (p.includes('code') || p.includes('function') || p.includes('react') || p.includes('typescript')) {
-    return `Here is a robust, production-ready solution:
-
-\`\`\`typescript
-/**
- * Hammad AI Pipeline Handler
- * Demonstrates type-safe asynchronous processing
- */
-interface ExecutionContext<T> {
-  id: string;
-  timestamp: number;
-  payload: T;
-  status: 'pending' | 'success' | 'failed';
-}
-
-export async function processPipeline<T, R>(
-  context: ExecutionContext<T>,
-  handler: (input: T) => Promise<R>
-): Promise<ExecutionContext<R>> {
-  try {
-    const result = await handler(context.payload);
-    return {
-      id: context.id,
-      timestamp: Date.now(),
-      payload: result,
-      status: 'success'
-    };
-  } catch (err) {
-    console.error('[Hammad AI Pipeline Error]:', err);
-    throw err;
-  }
-}
-\`\`\`
-
-Let me know if you would like me to extend this with caching, retry logic, or integration into our Flow Builder.`;
-  }
-
-  return `### Analysis & Strategic Recommendations
+  return `### Strategic Solution & Analysis
 
 Regarding your request: **"${prompt.slice(0, 100)}${prompt.length > 100 ? '...' : ''}"**
 
-1. **Core Insight**: Breaking this challenge into verifiable milestones guarantees higher fidelity and faster execution.
-2. **Implementation Strategy**:
-   - Establish strict boundary requirements and success criteria.
-   - Utilize structured prompts to govern variability and enforce determinism.
-   - Run end-to-end unit checks across intermediate outputs.
-3. **Next Steps**:
-   - You can configure this directly inside our **Flow Builder** to automate the workflow.
-   - Or test different temperature parameters in the sidebar to calibrate creativity versus precision.
-
-*Tip: Connect your Gemini API Key in Settings to enable real-time streaming model generation directly through Google's Gemini 2.5 Flash.*`;
+1. **Analysis**: Request categorized and processed through Hammad AI local reasoning pipeline.
+2. **Key Recommendation**: You can configure this directly inside our **Flow Builder** to automate downstream execution, or launch native apps using our **Laptop Bridge**.`;
 }
 
 function generateHeuristicEnhancedPrompt(prompt: string, focus: string) {
@@ -357,17 +344,13 @@ Execute the following core request with comprehensive accuracy:
 2. Do not use generic filler words, redundant pleasantries, or vague platitudes.
 3. Organize the output into clear semantic sections with actionable headings.
 4. If code or data formats are requested, provide complete, self-contained, and syntax-valid examples.
-5. Provide the reasoning and justification behind any architectural or strategic decisions.
 
 [INPUT VARIABLES]
 - {{context_details}}: Additional business or operational background if available.
 - {{target_audience}}: Primary consumer or stakeholder for this deliverable.
 
 [EXPECTED OUTPUT FORMAT]
-Structured Markdown including:
-- Executive Summary / Core Solution
-- Step-by-Step Implementation or Key Insights
-- Edge Cases & Quality Assurance Considerations`;
+Structured Markdown with clear semantic headings.`;
 
   return {
     enhancedPrompt: enhanced,
@@ -393,9 +376,8 @@ function generateFlowStepOutput(stepTitle: string, prompt: string): string {
 ${prompt.slice(0, 180)}...
 
 **Outputs Generated**:
-- Successfully evaluated 4 core data matrices
-- Normalized context vector for downstream pipeline integration
-- Ready for execution in subsequent flow stage`;
+- Stage execution completed
+- Ready for next flow pipeline phase`;
 }
 
 function generateScriptFallback(type: string, topic: string, tone: string, length: string): string {
@@ -407,37 +389,17 @@ function generateScriptFallback(type: string, topic: string, tone: string, lengt
 ---
 
 ### [0:00 - 0:15] Hook & Visual Intro
-**[VISUAL]**: Rapid, high-energy cinematic sequence showcasing key imagery related to ${topic}. Crisp typography overlays with animated statistics.
+**[VISUAL]**: Rapid, high-energy cinematic sequence showcasing key imagery related to ${topic}.
 **[AUDIO / SFX]**: Upbeat ambient synth crescendo with clean transition whoosh.
 **[VOICEOVER / HOST]**: 
 > "What if everything you knew about ${topic} was about to change? Today, we're cutting through the noise and revealing the exact blueprint you need."
 
 ---
 
-### [0:15 - 1:00] The Core Problem & Context
+### [0:15 - 1:00] The Core Context
 **[VISUAL]**: Split screen comparing conventional friction versus optimized modern execution.
 **[VOICEOVER / HOST]**:
-> "Most people approach ${topic} backwards. They waste hours on guesswork, when a systematic, AI-driven process can deliver 10x better results in half the time."
-
----
-
-### [1:00 - 2:30] Step-by-Step Tactical Breakdown
-**[VISUAL]**: Screen-recording walkthrough / 3D diagram illustrating the 3 pillar framework:
-1. Foundation & Research
-2. Algorithmic Optimization
-3. Scalable Execution
-
-**[VOICEOVER / HOST]**:
-> "Pillar number one: Precision inputs. If your setup isn't calibrated, the output won't hold up. 
-> Pillar number two: Iterative refinement. This is where top performers pull ahead.
-> And pillar number three: Systematizing your workflow."
-
----
-
-### [2:30 - End] Strategic Call to Action (CTA)
-**[VISUAL]**: Host on camera with clean minimal graphic banner showing resource links and community hub.
-**[VOICEOVER / HOST]**:
-> "If you found value in this breakdown, tap subscribe and leave a comment below with your biggest takeaway. Visit the link in the description to access our full resource kit."
+> "Most people approach ${topic} backwards. A systematic, AI-driven process delivers 10x better results in half the time."
 `;
 }
 

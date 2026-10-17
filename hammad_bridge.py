@@ -30,9 +30,9 @@ def launch_application(app_name):
             if "windows" in OS_NAME:
                 candidates = [
                     shutil.which("chrome"),
-                    os.path.expandvars(r"%ProgramFiles%\\Google\\Chrome\\Application\\chrome.exe"),
-                    os.path.expandvars(r"%ProgramFiles(x86)%\\Google\\Chrome\\Application\\chrome.exe"),
-                    os.path.expandvars(r"%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe"),
+                    os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                    os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
                 ]
                 executable = next((p for p in candidates if p and os.path.isfile(p)), None)
                 if not executable:
@@ -52,9 +52,9 @@ def launch_application(app_name):
             if "windows" in OS_NAME:
                 candidates = [
                     shutil.which("studio64"),
-                    os.path.expandvars(r"%ProgramFiles%\\Android\\Android Studio\\bin\\studio64.exe"),
-                    os.path.expandvars(r"%ProgramFiles(x86)%\\Android\\Android Studio\\bin\\studio64.exe"),
-                    os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Android Studio\\bin\\studio64.exe"),
+                    os.path.expandvars(r"%ProgramFiles%\Android\Android Studio\bin\studio64.exe"),
+                    os.path.expandvars(r"%ProgramFiles(x86)%\Android\Android Studio\bin\studio64.exe"),
+                    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Android Studio\bin\studio64.exe"),
                 ]
                 executable = next((p for p in candidates if p and os.path.isfile(p)), None)
                 if not executable:
@@ -74,8 +74,8 @@ def launch_application(app_name):
             if "windows" in OS_NAME:
                 candidates = [
                     shutil.which("code"),
-                    os.path.expandvars(r"%LOCALAPPDATA%\\Programs\\Microsoft VS Code\\Code.exe"),
-                    os.path.expandvars(r"%ProgramFiles%\\Microsoft VS Code\\Code.exe"),
+                    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"),
+                    os.path.expandvars(r"%ProgramFiles%\Microsoft VS Code\Code.exe"),
                 ]
                 executable = next((p for p in candidates if p and os.path.isfile(p)), None)
                 if not executable:

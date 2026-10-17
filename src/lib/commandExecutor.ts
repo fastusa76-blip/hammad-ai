@@ -199,7 +199,7 @@ export async function processVoiceCommand(
       .replace(/open up youtube|open youtube|launch youtube|start youtube|go to youtube/gi, ' ')
       .replace(/youtube|یوٹیوب|یو ٹیوب|यूट्यूब/gi, ' ')
       .replace(/on youtube|youtube par|youtube pe/gi, ' ')
-      .replace(/please|play|playing|song|music|listen to|search for|search|find|open|the|a|on/gi, ' ')
+      .replace(/please|play|playing|song|music|listen to|search for|search|find|open|the|a|on|and|then/gi, ' ')
       .replace(/gana|gaana|bajao|sunao|chalao|chala do|karo|kar do|par|pe/gi, ' ')
       .replace(/گانا|گانے|نغمہ|موسیقی|چلاؤ|چلاو|بجاؤ|سناؤ|پلے|کرو|کوئی|اچھا|پر|پہ|میں/g, ' ')
       .replace(/गाना|गीत|बजाओ|सुनाओ|चलाओ|प्ले|करो|पर/g, ' ')

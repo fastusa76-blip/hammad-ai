@@ -232,15 +232,46 @@ Format cleanly in Markdown with bold headers and actionable scene breakdowns.`;
 // Smart Fallback Generators for robust offline/sandbox preview
 function generateSmartFallbackReply(prompt: string, systemInstruction?: string, messageCount = 1): string {
   const p = prompt.toLowerCase();
+  const hasUrdu = /[\u0600-\u06FF]/.test(prompt);
+  const hasHindi = /[\u0900-\u097F]/.test(prompt);
+
+  if (hasUrdu) {
+    if (prompt.includes('کروم') || prompt.includes('اینڈرائیڈ') || prompt.includes('یوٹیوب') || prompt.includes('گانا')) {
+      return 'جی بالکل! میں آپ کے لیے کروم، اینڈرائیڈ اسٹوڈیو، یا یوٹیوب پر گانے چلا سکتا ہوں۔ نیچے دیے گئے بٹن یا وائس مائیک سے بولیں!';
+    }
+    if (prompt.includes('کون') || prompt.includes('تعارف') || prompt.includes('نام')) {
+      return 'میں حماد وائس اے آئی اسسٹنٹ ہوں۔ میں آپ کی آواز سن کر جواب دے سکتا ہوں، کروم اور اینڈرائیڈ اسٹوڈیو چلا سکتا ہوں، اور یوٹیوب پر کوئی بھی گانا پلے کر سکتا ہوں!';
+    }
+    if (prompt.includes('حال') || prompt.includes('خیریت')) {
+      return 'الحمدللہ، میں بالکل ٹھیک ہوں! فرمائیے، میں آپ کی کیا خدمت کر سکتا ہوں؟';
+    }
+    if (prompt.includes('انٹیلیجنس') || prompt.includes('اے آئی') || prompt.includes('مصنوعی ذہانت')) {
+      return 'آرٹیفیشل انٹیلیجنس کمپیوٹرز کی وہ ذہانت ہے جس کے ذریعے وہ انسانی عقل کی طرح سوچنے، سیکھنے اور فیصلہ کرنے کے قابل بنتے ہیں۔';
+    }
+    if (prompt.includes('کروم') || prompt.includes('اینڈرائیڈ') || prompt.includes('ایپ')) {
+      return 'جی بالکل، آپ "کروم چلاؤ" یا "اینڈرائیڈ اسٹوڈیو کھولو" کہیں، میں فوراً آپ کے لیپ ٹاپ پر یہ ایپس چلا دوں گا۔';
+    }
+    return `آپ کا سوال موصول ہو گیا ہے: "${prompt.slice(0, 60)}"۔ میں حماد اے آئی اسسٹنٹ کے طور پر آپ کی ہر وائس کمانڈ پر عمل کرنے کے لیے تیار ہوں۔`;
+  }
+
+  if (hasHindi) {
+    if (prompt.includes('कौन') || prompt.includes('नाम')) {
+      return 'मैं हम्माद एआई वॉयस असिस्टेंट हूँ। मैं आपकी आवाज़ सुनकर किसी भी सवाल का जवाब दे सकता हूँ, क्रोम और एंड्रॉयड स्टूडियो चला सकता हूँ!';
+    }
+    if (prompt.includes('कैसे') || prompt.includes('हाल')) {
+      return 'नमस्ते! मैं बिल्कुल ठीक हूँ। बताइए, आज मैं आपकी क्या सहायता कर सकता हूँ?';
+    }
+    return `नमस्ते! आपके अनुरोध "${prompt.slice(0, 60)}" पर कार्रवाई की जा रही है।`;
+  }
 
   if (p.includes('hello') || p.includes('hi') || p.includes('hey')) {
     return `Hello! Welcome to **Hammad AI** — your unified AI workstation.
 
 I am ready to assist you across all our core capabilities:
+- **Voice AI Assistant**: Real-time voice listening, Urdu/Hindi/English speech synthesis, local laptop application launcher (Chrome, Android Studio, VS Code), and YouTube playback!
 - **Intelligent Prompt Engineering & Enhancement**
 - **Automated Multi-Step Flow Pipelines**
 - **Studio Script & Content Generation**
-- **Code Architecture & Refactoring**
 
 How can I accelerate your project today?`;
   }

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Conversation, NavTab } from '../types';
-import { Plus, MessageSquare, Trash2, Search, Sparkles, Workflow, FileText, ChevronRight } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Search, Mic, Sparkles, Workflow, FileText } from 'lucide-react';
 
 interface SidebarProps {
   conversations: Conversation[];
@@ -33,6 +33,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
       <div className="p-3 border-b border-slate-800 md:hidden flex flex-col gap-1">
         <div className="grid grid-cols-2 gap-1">
           <button
+            onClick={() => setActiveTab('voice')}
+            className={`px-2 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 ${
+              activeTab === 'voice' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'
+            }`}
+          >
+            <Mic className="w-3.5 h-3.5 text-rose-400" />
+            Voice AI
+          </button>
+          <button
             onClick={() => setActiveTab('chat')}
             className={`px-2 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 ${
               activeTab === 'chat' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'
@@ -58,15 +67,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
           >
             <Workflow className="w-3.5 h-3.5" />
             Flows
-          </button>
-          <button
-            onClick={() => setActiveTab('scripts')}
-            className={`px-2 py-1.5 rounded-lg text-xs font-medium flex items-center justify-center gap-1.5 ${
-              activeTab === 'scripts' ? 'bg-indigo-600 text-white' : 'bg-slate-800 text-slate-300'
-            }`}
-          >
-            <FileText className="w-3.5 h-3.5" />
-            Scripts
           </button>
         </div>
       </div>
@@ -147,8 +147,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
       {/* Footer Info */}
       <div className="p-3 border-t border-slate-800 bg-slate-950/40 text-[11px] text-slate-500 flex items-center justify-between">
-        <span>Hammad AI v2.5</span>
-        <span className="text-slate-400">Node 22 / Vite</span>
+        <span className="flex items-center gap-1.5">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+          Hammad Voice AI
+        </span>
+        <span className="text-slate-400">v2.5</span>
       </div>
     </aside>
   );

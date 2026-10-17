@@ -1,6 +1,6 @@
 import React from 'react';
 import { AppSettings } from '../types';
-import { X, Key, Cpu, Shield, Trash2, CheckCircle2 } from 'lucide-react';
+import { X, Key, Cpu, Trash2, CheckCircle2, Mic, Volume2 } from 'lucide-react';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -68,6 +68,40 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </span>
               )}
             </div>
+          </div>
+
+          {/* Voice Language Preference */}
+          <div>
+            <label className="block text-slate-300 font-semibold mb-1 flex items-center gap-1.5">
+              <Mic className="w-3.5 h-3.5 text-indigo-400" />
+              Default Voice Recognition Language
+            </label>
+            <select
+              value={settings.voiceLanguage || 'ur-PK'}
+              onChange={(e) => onUpdateSettings({ ...settings, voiceLanguage: e.target.value })}
+              className="w-full bg-slate-950 border border-slate-800 rounded-lg p-2.5 text-slate-200 focus:outline-none focus:border-indigo-500 text-xs"
+            >
+              <option value="ur-PK">Urdu (اردو / Roman Urdu)</option>
+              <option value="hi-IN">Hindi (हिन्दी / Hinglish)</option>
+              <option value="en-US">English (United States)</option>
+            </select>
+          </div>
+
+          {/* Auto Speak Toggle */}
+          <div className="flex items-center justify-between p-3 bg-slate-950 rounded-xl border border-slate-800">
+            <div className="flex items-center gap-2">
+              <Volume2 className="w-4 h-4 text-indigo-400" />
+              <div>
+                <div className="text-slate-200 font-semibold">Voice Auto-Reply (TTS)</div>
+                <div className="text-[10px] text-slate-400">Speak AI responses automatically out loud</div>
+              </div>
+            </div>
+            <input
+              type="checkbox"
+              checked={settings.autoSpeak ?? true}
+              onChange={(e) => onUpdateSettings({ ...settings, autoSpeak: e.target.checked })}
+              className="w-4 h-4 accent-indigo-600 rounded"
+            />
           </div>
 
           {/* Custom API Key input */}

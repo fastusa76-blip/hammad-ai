@@ -1,4 +1,4 @@
-export type NavTab = 'chat' | 'prompts' | 'flows' | 'scripts';
+export type NavTab = 'voice' | 'chat' | 'prompts' | 'flows' | 'scripts';
 
 export interface ChatMessage {
   id: string;
@@ -51,4 +51,18 @@ export interface AppSettings {
   defaultModel: string;
   defaultTemperature: number;
   userName: string;
+  voiceLanguage: string;
+  autoSpeak: boolean;
+  bridgePort: number;
+}
+
+export interface ExecutedAction {
+  id: string;
+  timestamp: number;
+  type: 'youtube' | 'app' | 'browser' | 'answer';
+  title: string;
+  details: string;
+  status: 'success' | 'running' | 'info';
+  url?: string;
+  youtubeVideoId?: string;
 }

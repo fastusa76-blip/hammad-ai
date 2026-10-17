@@ -2,11 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { NavTab, Conversation, AppSettings } from './types';
 import { Header } from './components/Header';
 import { Sidebar } from './components/Sidebar';
+import { VoiceAssistantView } from './components/VoiceAssistantView';
 import { ChatView } from './components/ChatView';
 import { PromptStudioView } from './components/PromptStudioView';
 import { FlowBuilderView } from './components/FlowBuilderView';
 import { ScriptStudioView } from './components/ScriptStudioView';
 import { SettingsModal } from './components/SettingsModal';
+import { DesktopBridgeModal } from './components/DesktopBridgeModal';
 import { checkServerHealth } from './lib/api';
 
 const DEFAULT_CONVERSATION: Conversation = {
@@ -20,15 +22,14 @@ const DEFAULT_CONVERSATION: Conversation = {
       role: 'assistant',
       content: `# Welcome to Hammad AI Studio
 
-I am your unified AI engineering and execution assistant, built for developers, architects, and technical creators.
+I am your unified AI voice assistant and engineering workspace.
 
-### Available Toolsets:
-- **AI Chat Hub**: Context-aware dialogue powered by Google Gemini with customizable system personas.
-- **Prompt Studio**: Convert rough instructions into battle-tested prompts with variable testing and template libraries.
-- **Flow Builder**: Orchestrate multi-step recursive pipelines where each step feeds context to the next.
-- **Script Studio**: Produce production-ready video breakdowns, podcast discussions, and technical walkthroughs.
-
-Select a starter below or ask a question to begin.`,
+### Key Capabilities:
+- **Voice AI Assistant**: Real-time voice listening, Urdu/Hindi/English speech synthesis, local laptop application launcher (Chrome, Android Studio, VS Code), and YouTube playback!
+- **AI Chat Hub**: Context-aware dialogue powered by Google Gemini.
+- **Prompt Studio**: Optimize and benchmark prompt architectures with variables.
+- **Flow Builder**: Run multi-step automated execution pipelines.
+- **Script Studio**: Generate high-impact media and video scripts.`,
       timestamp: Date.now(),
       model: 'gemini-2.5-flash',
       source: 'offline-agent',
@@ -43,10 +44,13 @@ const DEFAULT_SETTINGS: AppSettings = {
   defaultModel: 'gemini-2.5-flash',
   defaultTemperature: 0.7,
   userName: 'Engineer',
+  voiceLanguage: 'ur-PK',
+  autoSpeak: true,
+  bridgePort: 8765,
 };
 
 export function App() {
-  const [activeTab, setActiveTab] = useState<NavTab>('chat');
+  const [activeTab, setActiveTab] = useState<NavTab>('voice');
 
   // Load conversations from localStorage or fallback
   const [conversations, setConversations] = useState<Conversation[]>(() => {
@@ -67,7 +71,7 @@ export function App() {
   const [settings, setSettings] = useState<AppSettings>(() => {
     try {
       const saved = localStorage.getItem('hammad_ai_settings');
-      if (saved) return JSON.parse(saved);
+      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) };
     } catch (e) {
       console.warn('Failed to parse settings');
     }
@@ -75,6 +79,7 @@ export function App() {
   });
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isBridgeModalOpen, setIsBridgeModalOpen] = useState(false);
   const [serverStatus, setServerStatus] = useState({ connected: false, geminiConfigured: false });
 
   // Persist conversations
@@ -159,7 +164,6 @@ export function App() {
     setActiveConversationId(newConv.id);
     setActiveTab('chat');
 
-    // Automatically trigger send in ChatView on next tick
     setTimeout(() => {
       const textarea = document.querySelector('textarea');
       if (textarea) {
@@ -179,22 +183,32 @@ export function App() {
         activeTab={activeTab}
         setActiveTab={setActiveTab}
         openSettings={() => setIsSettingsOpen(true)}
+        openBridgeModal={() => setIsBridgeModalOpen(true)}
         serverStatus={serverStatus}
       />
 
       <div className="flex-1 flex overflow-hidden">
-        {/* Sidebar only shown on chat tab or large screens */}
-        <Sidebar
-          conversations={conversations}
-          activeConversationId={activeConversationId}
-          onSelectConversation={setActiveConversationId}
-          onNewConversation={handleNewConversation}
-          onDeleteConversation={handleDeleteConversation}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-        />
+        {/* Show sidebar on chat tab */}
+        {activeTab === 'chat' && (
+          <Sidebar
+            conversations={conversations}
+            activeConversationId={activeConversationId}
+            onSelectConversation={setActiveConversationId}
+            onNewConversation={handleNewConversation}
+            onDeleteConversation={handleDeleteConversation}
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+          />
+        )}
 
         <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
+          {activeTab === 'voice' && (
+            <VoiceAssistantView
+              settings={settings}
+              openBridgeModal={() => setIsBridgeModalOpen(true)}
+            />
+          )}
+
           {activeTab === 'chat' && (
             <ChatView
               conversation={activeConversation}
@@ -222,6 +236,11 @@ export function App() {
         settings={settings}
         onUpdateSettings={setSettings}
         serverStatus={serverStatus}
+      />
+
+      <DesktopBridgeModal
+        isOpen={isBridgeModalOpen}
+        onClose={() => setIsBridgeModalOpen(false)}
       />
     </div>
   );

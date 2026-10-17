@@ -87,10 +87,11 @@ export function sendCommandToBridge(
 
   const requestId = crypto.randomUUID();
   return new Promise((resolve) => {
+    const timeoutMs = command.action === 'youtube_play' ? 20000 : 5000;
     const timeout = setTimeout(() => {
       pendingBridgeRequests.delete(requestId);
       resolve(false);
-    }, 5000);
+    }, timeoutMs);
 
     pendingBridgeRequests.set(requestId, { resolve, timeout });
     try {

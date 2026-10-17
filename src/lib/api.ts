@@ -20,8 +20,11 @@ export async function testGeminiDiagnostic(apiKey?: string): Promise<{
   response?: string;
 }> {
   try {
-    const url = apiKey ? `/api/gemini/test?apiKey=${encodeURIComponent(apiKey)}` : '/api/gemini/test';
-    const res = await fetch(url);
+    const res = await fetch('/api/gemini/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(apiKey ? { apiKey } : {}),
+    });
     return await res.json();
   } catch (err: any) {
     return {

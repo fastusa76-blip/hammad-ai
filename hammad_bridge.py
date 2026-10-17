@@ -71,7 +71,10 @@ def play_youtube_search(query):
         if parsed.scheme != "https" or parsed.hostname not in {"youtube.com", "www.youtube.com"}:
             print("[!] YouTube search did not return a trusted watch URL.")
             return False
-        opened = webbrowser.open(video_url, new=2, autoraise=True)
+        # Request autoplay; the browser may still enforce its own autoplay policy.
+        separator = "&" if "?" in video_url else "?"
+        playback_url = video_url + separator + "autoplay=1"
+        opened = webbrowser.open(playback_url, new=2, autoraise=True)
         if opened:
             print(f"[+] Opened YouTube video for query: {query!r}")
             return True

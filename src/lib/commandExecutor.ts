@@ -22,11 +22,27 @@ export function initDesktopBridge(port = 8765) {
 
     bridgeSocket.onclose = () => {
       isBridgeConnected = false;
+      failPendingBridgeRequests();
       bridgeListeners.forEach((l) => l(false));
+    };
+
+    bridgeSocket.onmessage = (event) => {
+      try {
+        const response = JSON.parse(String(event.data)) as { requestId?: string; status?: string };
+        if (!response.requestId) return;
+        const pending = pendingBridgeRequests.get(response.requestId);
+        if (!pending) return;
+        clearTimeout(pending.timeout);
+        pendingBridgeRequests.delete(response.requestId);
+        pending.resolve(response.status === 'ok');
+      } catch (err) {
+        console.warn('[Hammad AI Bridge] Invalid response:', err);
+      }
     };
 
     bridgeSocket.onerror = () => {
       isBridgeConnected = false;
+      failPendingBridgeRequests();
       bridgeListeners.forEach((l) => l(false));
     };
   } catch (err) {
@@ -47,12 +63,44 @@ export function isDesktopBridgeActive(): boolean {
   return isBridgeConnected;
 }
 
-export function sendCommandToBridge(command: { action: string; app?: string; cmd?: string }) {
-  if (bridgeSocket && bridgeSocket.readyState === WebSocket.OPEN) {
-    bridgeSocket.send(JSON.stringify(command));
-    return true;
+type PendingBridgeRequest = {
+  resolve: (success: boolean) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+
+const pendingBridgeRequests = new Map<string, PendingBridgeRequest>();
+
+function failPendingBridgeRequests() {
+  for (const [requestId, pending] of pendingBridgeRequests) {
+    clearTimeout(pending.timeout);
+    pending.resolve(false);
+    pendingBridgeRequests.delete(requestId);
   }
-  return false;
+}
+
+export function sendCommandToBridge(
+  command: { action: string; app?: string; cmd?: string }
+): Promise<boolean> {
+  if (!bridgeSocket || bridgeSocket.readyState !== WebSocket.OPEN) {
+    return Promise.resolve(false);
+  }
+
+  const requestId = crypto.randomUUID();
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      pendingBridgeRequests.delete(requestId);
+      resolve(false);
+    }, 5000);
+
+    pendingBridgeRequests.set(requestId, { resolve, timeout });
+    try {
+      bridgeSocket!.send(JSON.stringify({ ...command, requestId }));
+    } catch {
+      clearTimeout(timeout);
+      pendingBridgeRequests.delete(requestId);
+      resolve(false);
+    }
+  });
 }
 
 // Curated verified YouTube video IDs ONLY for exact, known popular titles
@@ -228,7 +276,7 @@ export async function processVoiceCommand(
   if (isChromeCommand) {
     let bridgeSent = false;
     if (bridgeActive) {
-      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'chrome' });
+      bridgeSent = await sendCommandToBridge({ action: 'launch', app: 'chrome' });
     }
 
     // Always attempt web trigger as fallback
@@ -246,11 +294,16 @@ export async function processVoiceCommand(
         ? 'لوکل برج کے ذریعے آپ کے لیپ ٹاپ پر گوگل کروم چلایا جا رہا ہے!'
         : 'Launching Google Chrome native process on your laptop via Desktop Bridge.';
       detailsMessage = 'Native Google Chrome process launched via Desktop Bridge (ws://localhost:8765).';
+    } else if (!bridgeActive) {
+      spokenFeedback = isUrduScript
+        ? 'لوکل برج کنیکٹ نہیں ہے، اس لیے براؤزر میں گوگل کھولا گیا ہے۔ اصل کروم چلانے کے لیے python hammad_bridge.py چلائیں۔'
+        : 'Desktop Bridge is offline. Opened Google in a browser tab. Run "python hammad_bridge.py" to launch the native Chrome app.';
+      detailsMessage = 'Web tab opened. Native Chrome was not launched because Desktop Bridge is offline.';
     } else {
       spokenFeedback = isUrduScript
-        ? 'لوکل برج کنیکٹ نہیں ہے، اس لیے براؤزر میں گوگل کھولا گیا ہے۔ لیپ ٹاپ کی اصل ایپ چلانے کے لیے python hammad_bridge.py چلائیں۔'
-        : 'Desktop Bridge is offline. Opened Google in a new browser tab. Run "python hammad_bridge.py" to launch the native app on your laptop.';
-      detailsMessage = 'Web tab opened. Native desktop process was NOT launched because Desktop Bridge is offline.';
+        ? 'اصل کروم نہیں چل سکا، اس لیے براؤزر میں گوگل کھولا گیا ہے۔ برج کنسول میں خرابی دیکھیں۔'
+        : 'Native Chrome launch was not confirmed. Opened Google in a browser tab; check the bridge console.';
+      detailsMessage = 'Web tab opened as fallback. The Desktop Bridge did not confirm native Chrome launch.';
     }
 
     const actionCard: ExecutedAction = {
@@ -285,7 +338,7 @@ export async function processVoiceCommand(
   if (isAndroidStudioCommand) {
     let bridgeSent = false;
     if (bridgeActive) {
-      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'android-studio' });
+      bridgeSent = await sendCommandToBridge({ action: 'launch', app: 'android-studio' });
     }
 
     let spokenFeedback = '';
@@ -296,11 +349,16 @@ export async function processVoiceCommand(
         ? 'لوکل برج کے ذریعے آپ کے لیپ ٹاپ پر اینڈرائیڈ اسٹوڈیو چلایا جا رہا ہے!'
         : 'Launching Android Studio native app on your laptop via Desktop Bridge.';
       detailsMessage = 'Native Android Studio (studio64.exe) launch signal dispatched via Desktop Bridge.';
-    } else {
+    } else if (!bridgeActive) {
       spokenFeedback = isUrduScript
         ? 'اینڈرائیڈ اسٹوڈیو چلانے کے لیے لوکل برج کنیکٹ کریں۔ ٹرمینل میں python hammad_bridge.py رن کریں۔'
-        : 'Desktop Bridge is offline. To launch Android Studio on your laptop, start python hammad_bridge.py in your terminal.';
-      detailsMessage = 'Desktop Bridge (ws://localhost:8765) is offline. Android Studio requires the companion bridge to start on Windows/Mac.';
+        : 'Desktop Bridge is offline. Start python hammad_bridge.py in your terminal.';
+      detailsMessage = 'Desktop Bridge is offline; native Android Studio launch was not attempted.';
+    } else {
+      spokenFeedback = isUrduScript
+        ? 'اینڈرائیڈ اسٹوڈیو نہیں کھل سکا۔ برج کنسول میں خرابی دیکھیں اور انسٹالیشن چیک کریں۔'
+        : 'Android Studio did not launch. Check the bridge console and installation path.';
+      detailsMessage = 'Bridge did not confirm Android Studio launch. Check whether the app is installed.';
     }
 
     const actionCard: ExecutedAction = {
@@ -331,7 +389,7 @@ export async function processVoiceCommand(
   if (isVsCodeCommand) {
     let bridgeSent = false;
     if (bridgeActive) {
-      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'vscode' });
+      bridgeSent = await sendCommandToBridge({ action: 'launch', app: 'vscode' });
     }
 
     try {
@@ -346,7 +404,7 @@ export async function processVoiceCommand(
         : 'Launching Visual Studio Code on your laptop.'
       : isUrduScript
       ? 'وی ایس کوڈ کا پروٹوکول اوپن کیا گیا ہے۔ مکمل لانچ کے لیے لوکل برج چلائیں۔'
-      : 'Triggered vscode:// protocol. For direct executable launch, connect Desktop Bridge.';
+      : bridgeActive ? 'VS Code launch was not confirmed. Check the bridge console.' : 'Triggered vscode:// protocol. For direct executable launch, connect Desktop Bridge.';
 
     return {
       intent: 'app_launch',
@@ -357,7 +415,7 @@ export async function processVoiceCommand(
         timestamp: Date.now(),
         type: 'app',
         title: 'Visual Studio Code',
-        details: bridgeSent ? 'Dispatched native code launch.' : 'Triggered vscode:// scheme. Bridge is offline.',
+        details: bridgeSent ? 'Desktop Bridge confirmed the VS Code launch request.' : bridgeActive ? 'Desktop Bridge did not confirm the VS Code launch.' : 'Triggered vscode:// scheme. Bridge is offline.',
         status: bridgeSent ? 'success' : 'info',
         url: 'vscode://',
       },
@@ -373,7 +431,7 @@ export async function processVoiceCommand(
   if (isCalcCommand) {
     let bridgeSent = false;
     if (bridgeActive) {
-      bridgeSent = sendCommandToBridge({ action: 'launch', app: 'calculator' });
+      bridgeSent = await sendCommandToBridge({ action: 'launch', app: 'calculator' });
     }
 
     const spokenFeedback = bridgeSent
@@ -393,7 +451,7 @@ export async function processVoiceCommand(
         timestamp: Date.now(),
         type: 'app',
         title: 'Calculator',
-        details: bridgeSent ? 'Launched native calculator.' : 'Desktop Bridge offline; run python hammad_bridge.py to start local tools.',
+        details: bridgeSent ? 'Desktop Bridge confirmed the calculator launch request.' : bridgeActive ? 'Desktop Bridge did not confirm calculator launch.' : 'Desktop Bridge offline; run python hammad_bridge.py to start local tools.',
         status: bridgeSent ? 'success' : 'info',
       },
     };

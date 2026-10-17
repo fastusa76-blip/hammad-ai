@@ -1,0 +1,8 @@
+{
+  "name": "Hammad AI",
+  "description": "Comprehensive AI platform and workspace featuring intelligent chat, prompt engineering studio, automated workflow builder, and script generator powered by Gemini.",
+  "permissions": [],
+  "capabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

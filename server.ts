@@ -1,5 +1,4 @@
 import express, { Request, Response } from 'express';
-import cors from 'cors';
 import dotenv from 'dotenv';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI } from '@google/genai';
@@ -8,9 +7,8 @@ dotenv.config();
 
 const app = express();
 const PORT = 3000;
-const HOST = '0.0.0.0';
+const HOST = '127.0.0.1';
 
-app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // Helper to get GoogleGenAI client (prefers server environment key for security)
@@ -31,10 +29,11 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-// Dedicated Gemini connection & quota diagnostic endpoint (Exposes real error messages!)
-app.get('/api/gemini/test', async (req: Request, res: Response) => {
-  const clientKey = req.query.apiKey as string | undefined;
-  const keyToUse = clientKey?.trim() || process.env.GEMINI_API_KEY;
+// Dedicated Gemini connection & quota diagnostic endpoint.
+// POST keeps user-supplied API keys out of URLs, browser history, and common access logs.
+app.post('/api/gemini/test', async (req: Request, res: Response) => {
+  const clientKey = typeof req.body?.apiKey === 'string' ? req.body.apiKey.trim() : '';
+  const keyToUse = clientKey || process.env.GEMINI_API_KEY;
 
   if (!keyToUse) {
     return res.json({
@@ -52,23 +51,22 @@ app.get('/api/gemini/test', async (req: Request, res: Response) => {
       contents: [{ role: 'user', parts: [{ text: 'Respond with the word "CONNECTED"' }] }],
     });
 
-    const latencyMs = Date.now() - startTime;
     return res.json({
       configured: true,
       status: 'connected',
       model: 'gemini-2.5-flash',
-      latencyMs,
+      latencyMs: Date.now() - startTime,
       response: response.text?.trim() || 'CONNECTED',
       source: clientKey ? 'client-key' : 'server-env'
     });
   } catch (err: any) {
-    console.error('[Gemini Diagnostic Error]:', err);
+    // Log a concise diagnostic, but never return full error objects or stack traces to the browser.
+    console.error('[Gemini Diagnostic Error]:', err?.status || err?.code || 'API_FAILURE', err?.message || 'Gemini API call failed');
     return res.status(200).json({
       configured: true,
       status: 'error',
-      errorMessage: err.message || 'Gemini API call failed',
-      errorCode: err.status || err.code || 'API_FAILURE',
-      errorDetails: err.toString()
+      errorMessage: err?.message || 'Gemini API call failed',
+      errorCode: String(err?.status || err?.code || 'API_FAILURE')
     });
   }
 });

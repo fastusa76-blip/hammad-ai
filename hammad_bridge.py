@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 
@@ -22,59 +23,91 @@ def print_banner():
     print("[*] Waiting for Hammad Voice AI browser connection...\n")
 
 def launch_application(app_name):
+    """Launch only explicitly supported applications and report failures honestly."""
     print(f"[>] Command received to launch: '{app_name}'")
     try:
         if app_name == "chrome":
             if "windows" in OS_NAME:
-                os.system("start chrome")
-            elif "darwin" in OS_NAME:  # macOS
+                candidates = [
+                    shutil.which("chrome"),
+                    os.path.expandvars(r"%ProgramFiles%\Google\Chrome\Application\chrome.exe"),
+                    os.path.expandvars(r"%ProgramFiles(x86)%\Google\Chrome\Application\chrome.exe"),
+                    os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe"),
+                ]
+                executable = next((p for p in candidates if p and os.path.isfile(p)), None)
+                if not executable:
+                    print("[!] Google Chrome was not found in PATH or standard install folders.")
+                    return False
+                subprocess.Popen([executable])
+            elif "darwin" in OS_NAME:
                 subprocess.Popen(["open", "-a", "Google Chrome"])
-            else:  # Linux
-                subprocess.Popen(["google-chrome"])
-            print("[+] Successfully launched Google Chrome!")
+            else:
+                executable = shutil.which("google-chrome") or shutil.which("chromium") or shutil.which("chromium-browser")
+                if not executable:
+                    print("[!] Chrome/Chromium was not found in PATH.")
+                    return False
+                subprocess.Popen([executable])
 
         elif app_name == "android-studio":
             if "windows" in OS_NAME:
-                possible_paths = [
-                    r"C:\Program Files\Android\Android Studio\bin\studio64.exe",
-                    r"C:\Program Files (x86)\Android\Android Studio\bin\studio64.exe",
+                candidates = [
+                    shutil.which("studio64"),
+                    os.path.expandvars(r"%ProgramFiles%\Android\Android Studio\bin\studio64.exe"),
+                    os.path.expandvars(r"%ProgramFiles(x86)%\Android\Android Studio\bin\studio64.exe"),
                     os.path.expandvars(r"%LOCALAPPDATA%\Programs\Android Studio\bin\studio64.exe"),
                 ]
-                launched = False
-                for p in possible_paths:
-                    if os.path.exists(p):
-                        subprocess.Popen([p])
-                        launched = True
-                        print(f"[+] Launched Android Studio from: {p}")
-                        break
-                if not launched:
-                    os.system("start studio64")
-                    print("[+] Dispatched 'start studio64'")
+                executable = next((p for p in candidates if p and os.path.isfile(p)), None)
+                if not executable:
+                    print("[!] Android Studio was not found in standard install folders or PATH.")
+                    return False
+                subprocess.Popen([executable])
             elif "darwin" in OS_NAME:
                 subprocess.Popen(["open", "-a", "Android Studio"])
-                print("[+] Launched Android Studio on macOS")
             else:
-                subprocess.Popen(["android-studio"])
-                print("[+] Launched Android Studio on Linux")
+                executable = shutil.which("android-studio") or shutil.which("studio")
+                if not executable:
+                    print("[!] Android Studio was not found in PATH.")
+                    return False
+                subprocess.Popen([executable])
 
         elif app_name == "vscode":
             if "windows" in OS_NAME:
-                os.system("start code")
+                candidates = [
+                    shutil.which("code"),
+                    os.path.expandvars(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"),
+                    os.path.expandvars(r"%ProgramFiles%\Microsoft VS Code\Code.exe"),
+                ]
+                executable = next((p for p in candidates if p and os.path.isfile(p)), None)
+                if not executable:
+                    print("[!] Visual Studio Code was not found in PATH or standard install folders.")
+                    return False
+                subprocess.Popen([executable])
             else:
-                subprocess.Popen(["code"])
-            print("[+] Launched Visual Studio Code!")
+                executable = shutil.which("code")
+                if not executable:
+                    print("[!] Visual Studio Code command 'code' was not found in PATH.")
+                    return False
+                subprocess.Popen([executable])
 
         elif app_name == "calculator":
             if "windows" in OS_NAME:
-                os.system("start calc")
+                subprocess.Popen(["calc.exe"])
             elif "darwin" in OS_NAME:
                 subprocess.Popen(["open", "-a", "Calculator"])
             else:
-                subprocess.Popen(["gnome-calculator"])
-            print("[+] Launched Calculator!")
+                executable = shutil.which("gnome-calculator") or shutil.which("kcalc") or shutil.which("xcalc")
+                if not executable:
+                    print("[!] No supported calculator application was found.")
+                    return False
+                subprocess.Popen([executable])
 
+        else:
+            print(f"[!] Unsupported application: {app_name!r}")
+            return False
+
+        print(f"[+] Launch request dispatched for {app_name}.")
         return True
-    except Exception as e:
+    except (OSError, subprocess.SubprocessError) as e:
         print(f"[!] Error launching {app_name}: {e}")
         return False
 
@@ -85,12 +118,23 @@ async def handler(websocket):
             try:
                 data = json.loads(message)
                 action = data.get("action")
+                request_id = data.get("requestId")
                 if action == "launch":
                     app = data.get("app")
-                    success = launch_application(app)
-                    await websocket.send(json.dumps({
+                    success = isinstance(app, str) and launch_application(app)
+                    response = {
+                        "requestId": request_id,
                         "status": "ok" if success else "failed",
-                        "app": app
+                        "app": app,
+                    }
+                    if not success:
+                        response["error"] = "Application launch failed; check the bridge console and app installation."
+                    await websocket.send(json.dumps(response))
+                else:
+                    await websocket.send(json.dumps({
+                        "requestId": request_id,
+                        "status": "failed",
+                        "error": "Unsupported action."
                     }))
             except Exception as e:
                 print(f"[!] Invalid message payload: {e}")
@@ -106,7 +150,13 @@ async def main():
         sys.exit(1)
 
     print_banner()
-    async with websockets.serve(handler, "localhost", PORT):
+    async with websockets.serve(
+        handler,
+        "localhost",
+        PORT,
+        origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+        max_size=64 * 1024,
+    ):
         await asyncio.Future()  # run forever
 
 if __name__ == "__main__":

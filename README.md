@@ -18,9 +18,10 @@
    - **VS Code & Calculator**: کوڈ ایڈیٹر اور دیگر ٹولز کو وائس کمانڈ سے لانچ کریں۔
    - **Local Desktop Companion Bridge**: ایک محفوظ لوکل WebSocket پل جو ویب براؤزر کو آپ کے کمپیوٹر کی مقامی ایپس سے جوڑتا ہے۔
 
-3. **YouTube میڈیا اور ویڈیو پلیئر (YouTube Player & Search)**:
-   - کہیں *"یوٹیوب پر گانا چلاؤ"* یا *"Play Pasoori on YouTube"* یا *"کوئی اچھا گانا چلاؤ"*۔
-   - ایپ کے اندر موجود **YouTube Theater Player** فوراً گانا ڈھونڈ کر پلے کر دیتا ہے۔
+3. **YouTube میڈیا اور وائس کمانڈز (YouTube Voice Commands)**:
+   - صرف *"Open YouTube"* یا *"یوٹیوب کھولو"* کہیں تو نیا ٹیب YouTube ہوم پیج کھولے گا؛ کوئی ڈیفالٹ گانا تلاش نہیں ہوگا۔
+   - *"Play Pasoori on YouTube"* یا *"Open YouTube and play Enifeslam"* کہیں تو مطلوبہ گانا کھولنے کی کوشش کرے گا۔
+   - کسی بھی گانے کو خودکار طور پر چلانے کے لیے Local Desktop Bridge اور `yt-dlp` درکار ہیں؛ یہ صرف YouTube کا watch page کھولتا ہے، ویڈیو ڈاؤن لوڈ نہیں کرتا۔
 
 4. **Gemini 2.5 AI انٹیلیجنس**:
    - عام سوالات، کوڈنگ، منطق اور تحقیق کے تمام سوالات کے فوری اور درست جوابات۔
@@ -86,8 +87,8 @@ npm run dev
 # نیا PowerShell ونڈو کھولیں اور ریپو فولڈر میں جائیں
 cd hammad-ai
 
-# Python کے لیے websockets انسٹال کریں
-pip install websockets
+# Python کے لیے WebSocket اور YouTube سرچ پیکجز انسٹال کریں
+python -m pip install websockets yt-dlp
 
 # لوکل ڈیسک ٹاپ برج چلائیں
 python hammad_bridge.py
@@ -113,7 +114,8 @@ python hammad_bridge.py
 |---|---|---|
 | **کروم چلائیں** | *"کروم چلاؤ"* یا *"گوگل کروم کھولو"* | `Chrome chalao` / `Open Chrome` |
 | **اینڈرائیڈ اسٹوڈیو** | *"اینڈرائیڈ اسٹوڈیو کھولو"* | `Android Studio chalao` / `Launch Android Studio` |
-| **یوٹیوب گانا** | *"یوٹیوب پر گانا چلاؤ"* / *"پاسوری چلاؤ"* | `YouTube pe gana chalao` / `Play Pasoori on YouTube` |
+| **صرف YouTube کھولیں** | *"یوٹیوب کھولو"* | `Open YouTube` / `YouTube kholo` |
+| **گانا خودکار چلائیں** | *"پاسوری چلاؤ"* | `Play Pasoori on YouTube` / `Open YouTube and play Enifeslam` |
 | **وی ایس کوڈ** | *"وی ایس کوڈ چلاؤ"* | `VS Code chalao` / `Open VS Code` |
 | **کیلکولیٹر** | *"کیلکولیٹر کھولو"* | `Calculator chalao` / `Open Calculator` |
 | **عام سوالات** | *"آرٹیفیشل انٹیلیجنس کیا ہے؟"* | `What is Machine Learning?` |

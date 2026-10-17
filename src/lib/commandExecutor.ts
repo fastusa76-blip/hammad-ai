@@ -79,7 +79,7 @@ function failPendingBridgeRequests() {
 }
 
 export function sendCommandToBridge(
-  command: { action: string; app?: string; cmd?: string }
+  command: { action: string; app?: string; cmd?: string; url?: string; query?: string }
 ): Promise<boolean> {
   if (!bridgeSocket || bridgeSocket.readyState !== WebSocket.OPEN) {
     return Promise.resolve(false);
@@ -87,10 +87,11 @@ export function sendCommandToBridge(
 
   const requestId = crypto.randomUUID();
   return new Promise((resolve) => {
+    const timeoutMs = command.action === 'youtube_play' ? 20000 : 5000;
     const timeout = setTimeout(() => {
       pendingBridgeRequests.delete(requestId);
       resolve(false);
-    }, 5000);
+    }, timeoutMs);
 
     pendingBridgeRequests.set(requestId, { resolve, timeout });
     try {
@@ -133,84 +134,98 @@ export async function processVoiceCommand(
   const isUrduScript = /[\u0600-\u06FF]/.test(text);
   const isHindiScript = /[\u0900-\u097F]/.test(text);
 
-  // 1. YOUTUBE COMMAND IDENTIFICATION
-  const isYouTubeCommand =
-    lower.includes('youtube') ||
-    lower.startsWith('play ') ||
-    lower.includes('play song') ||
-    lower.includes('gana chalao') ||
-    lower.includes('gaana chalao') ||
-    lower.includes('song chalao') ||
-    lower.includes('gana play') ||
-    lower.includes('bajao') ||
-    lower.includes('sunao') ||
+  // 1. YOUTUBE COMMANDS: opening YouTube is separate from playing/searching a song.
+  const normalized = lower.replace(/[.!?]+/g, '').trim();
+  const mentionsYouTube =
+    /\byoutube\b/i.test(text) ||
     text.includes('یوٹیوب') ||
     text.includes('یو ٹیوب') ||
-    text.includes('گانا') ||
-    text.includes('گانے') ||
-    text.includes('نغمہ') ||
-    text.includes('موسیقی') ||
-    text.includes('چلاؤ') ||
-    text.includes('چلاو') ||
-    text.includes('بجاؤ') ||
-    text.includes('سناؤ') ||
-    text.includes('यूट्यूब') ||
-    text.includes('गाना') ||
-    text.includes('गीत');
+    text.includes('यूट्यूब');
 
-  if (
-    isYouTubeCommand &&
-    !lower.includes('chrome') &&
-    !text.includes('کروم') &&
-    !lower.includes('android') &&
-    !text.includes('اینڈرائیڈ')
-  ) {
+  const isBareYouTubeCommand =
+    /^(youtube|open youtube|open up youtube|launch youtube|start youtube|go to youtube|show youtube|youtube please)$/i.test(normalized) ||
+    /^(youtube|یوٹیوب|یو ٹیوب|यूट्यूब)\s*(کھولو|کھولیں|کھول دو|اوپن کرو|چلاو|چلاؤ|اوپن|کھول دو)?$/i.test(normalized) ||
+    /^(youtube|youtube ko)\s+(kholo|khol do|open karo|chalao)$/i.test(normalized) ||
+    /^(यूट्यूब|यूट्यूब को)\s*(खोलो|खोल दो|ओपन करो)?$/i.test(normalized);
+
+  const hasSongAction =
+    /\b(play|playing|song|music|listen|search|find)\b/i.test(lower) ||
+    /\b(gana|gaana|bajao|sunao|chalao|chala do)\b/i.test(lower) ||
+    /گانا|گانے|نغمہ|موسیقی|چلاؤ|چلاو|بجاؤ|سناؤ|پلے|سناؤ/.test(text) ||
+    /गाना|गीत|बजाओ|सुनाओ|चलाओ|प्ले/.test(text);
+
+  const isYouTubeCommand = isBareYouTubeCommand || (mentionsYouTube && hasSongAction) ||
+    /^(play|playing)\s+/i.test(lower) ||
+    /\b(gana chalao|gaana chalao|song chalao|gana play)\b/i.test(lower) ||
+    /^(گانا|گانے|موسیقی|نغمہ|गाना|गीत)/.test(text);
+
+  if (isYouTubeCommand && !lower.includes('chrome') && !text.includes('کروم') &&
+      !lower.includes('android') && !text.includes('اینڈرائیڈ')) {
+    const bridgeActive = isDesktopBridgeActive();
+
+    // "Open YouTube" must only open the homepage. Never invent a default song.
+    if (isBareYouTubeCommand || (mentionsYouTube && !hasSongAction)) {
+      const homeUrl = 'https://www.youtube.com/';
+      let openedByBridge = false;
+      if (bridgeActive) {
+        openedByBridge = await sendCommandToBridge({ action: 'open_url', url: homeUrl });
+      }
+      if (!openedByBridge) {
+        try { window.open(homeUrl, '_blank', 'noopener,noreferrer'); } catch { /* popup may be blocked */ }
+      }
+
+      return {
+        intent: 'youtube',
+        query: '',
+        spokenFeedback: isUrduScript
+          ? 'یوٹیوب کھول رہا ہوں۔ ابھی کوئی گانا تلاش نہیں کیا گیا۔'
+          : isHindiScript
+          ? 'YouTube खोल रहा हूँ। अभी कोई गाना सर्च नहीं किया गया।'
+          : 'Opening YouTube in a new tab. I have not searched for or played a song.',
+        actionCard: {
+          id: crypto.randomUUID(),
+          timestamp: Date.now(),
+          type: 'youtube',
+          title: 'Open YouTube',
+          details: openedByBridge
+            ? 'Opened the YouTube homepage in your default browser.'
+            : 'Requested a new browser tab for the YouTube homepage.',
+          status: 'success',
+          url: homeUrl,
+        },
+      };
+    }
+
     let cleanQuery = text
-      .replace(/یوٹیوب/g, '')
-      .replace(/یو ٹیوب/g, '')
-      .replace(/پر/g, '')
-      .replace(/پہ/g, '')
-      .replace(/میں/g, '')
-      .replace(/گانا/g, '')
-      .replace(/گانے/g, '')
-      .replace(/نغمہ/g, '')
-      .replace(/چلاؤ/g, '')
-      .replace(/چلاو/g, '')
-      .replace(/بجاؤ/g, '')
-      .replace(/سناؤ/g, '')
-      .replace(/پلے/g, '')
-      .replace(/کرو/g, '')
-      .replace(/کوئی/g, '')
-      .replace(/اچھا/g, '')
-      .replace(/यूट्यूब/g, '')
-      .replace(/पर/g, '')
-      .replace(/गाना/g, '')
-      .replace(/गीत/g, '')
-      .replace(/चलाओ/g, '')
-      .replace(/बजाओ/g, '')
-      .replace(/सुनाओ/g, '')
-      .replace(/play/gi, '')
-      .replace(/on youtube/gi, '')
-      .replace(/youtube par/gi, '')
-      .replace(/youtube pe/gi, '')
-      .replace(/youtube/gi, '')
-      .replace(/song/gi, '')
-      .replace(/chalao/gi, '')
-      .replace(/karo/gi, '')
-      .replace(/bajao/gi, '')
-      .replace(/sunao/gi, '')
-      .replace(/gana/gi, '')
-      .replace(/gaana/gi, '')
+      .replace(/open up youtube|open youtube|launch youtube|start youtube|go to youtube/gi, ' ')
+      .replace(/youtube|یوٹیوب|یو ٹیوب|यूट्यूब/gi, ' ')
+      .replace(/on youtube|youtube par|youtube pe/gi, ' ')
+      .replace(/please|play|playing|song|music|listen to|search for|search|find|open|the|a|on|and|then/gi, ' ')
+      .replace(/gana|gaana|bajao|sunao|chalao|chala do|karo|kar do|par|pe/gi, ' ')
+      .replace(/گانا|گانے|نغمہ|موسیقی|چلاؤ|چلاو|بجاؤ|سناؤ|پلے|کرو|کوئی|اچھا|پر|پہ|میں/g, ' ')
+      .replace(/गाना|गीत|बजाओ|सुनाओ|चलाओ|प्ले|करो|पर/g, ' ')
+      .replace(/[,:;.!?]+/g, ' ')
+      .replace(/\s+/g, ' ')
       .trim();
 
     if (!cleanQuery) {
-      cleanQuery = isUrduScript ? 'پاسوری' : 'Pasoori';
+      const homeUrl = 'https://www.youtube.com/';
+      try { window.open(homeUrl, '_blank', 'noopener,noreferrer'); } catch { /* popup may be blocked */ }
+      return {
+        intent: 'youtube',
+        query: '',
+        spokenFeedback: isUrduScript ? 'یوٹیوب کھول رہا ہوں۔ گانے کا نام بھی بتا دیں۔' : 'Opening YouTube. Please also say the song title if you want music played.',
+        actionCard: {
+          id: crypto.randomUUID(), timestamp: Date.now(), type: 'youtube',
+          title: 'Open YouTube', details: 'No song title was detected; opened the YouTube homepage.',
+          status: 'info', url: homeUrl,
+        },
+      };
     }
 
     const queryLower = cleanQuery.toLowerCase();
-    let exactVideoId: string | undefined = undefined;
-    let exactTitle: string | undefined = undefined;
-
+    let exactVideoId: string | undefined;
+    let exactTitle: string | undefined;
     for (const [key, item] of Object.entries(CURATED_YOUTUBE_VIDEOS)) {
       if (queryLower.includes(key)) {
         exactVideoId = item.id;
@@ -220,35 +235,34 @@ export async function processVoiceCommand(
     }
 
     const isExact = Boolean(exactVideoId);
-    const targetUrl = `https://www.youtube.com/results?search_query=${encodeURIComponent(cleanQuery)}`;
+    const targetUrl = exactVideoId
+      ? 'https://www.youtube.com/watch?v=' + exactVideoId + '&autoplay=1'
+      : 'https://www.youtube.com/results?search_query=' + encodeURIComponent(cleanQuery);
+    let playedByBridge = false;
 
-    // Try to open YouTube search immediately in new tab for user
-    try {
-      window.open(targetUrl, '_blank');
-    } catch (e) {
-      // browser popup might be blocked; UI action card provides button
+    // The local bridge can resolve arbitrary song names to a YouTube watch URL using yt-dlp,
+    // then open that video in a new browser tab. This avoids requiring a Google API key.
+    if (bridgeActive) {
+      playedByBridge = await sendCommandToBridge({
+        action: 'youtube_play',
+        query: cleanQuery,
+      });
     }
 
-    const spokenFeedback = isExact
-      ? isUrduScript
-        ? `یوٹیوب پر "${exactTitle}" چلایا جا رہا ہے!`
-        : `Playing "${exactTitle}" on YouTube.`
-      : isUrduScript
-      ? `یوٹیوب پر "${cleanQuery}" تلاش کر کے نتائج کھولے جا رہے ہیں!`
-      : `Searching YouTube for "${cleanQuery}" and opening search results.`;
+    if (!playedByBridge) {
+      try { window.open(targetUrl, '_blank', 'noopener,noreferrer'); } catch { /* popup may be blocked */ }
+    }
 
-    const actionCard: ExecutedAction = {
-      id: crypto.randomUUID(),
-      timestamp: Date.now(),
-      type: 'youtube',
-      title: isExact ? `YouTube: ${exactTitle}` : `YouTube Search: "${cleanQuery}"`,
-      details: isExact
-        ? `Matched official video. Playing in Hammad AI Theater Player.`
-        : `Opened YouTube search results for "${cleanQuery}". Click button to view in YouTube.`,
-      status: 'success',
-      url: targetUrl,
-      youtubeVideoId: exactVideoId,
-    };
+    const playingConfirmed = isExact || playedByBridge;
+    const spokenFeedback = playingConfirmed
+      ? isUrduScript
+        ? 'یوٹیوب پر "' + (exactTitle || cleanQuery) + '" چلانے کے لیے کھول دیا ہے۔'
+        : isHindiScript
+        ? 'YouTube पर "' + (exactTitle || cleanQuery) + '" चलाने के लिए खोल दिया है।'
+        : 'Opening "' + (exactTitle || cleanQuery) + '" to play on YouTube.'
+      : isUrduScript
+      ? 'گانے کے نتائج کھول دیے ہیں۔ خودکار پلے کے لیے Desktop Bridge چلائیں اور "pip install websockets yt-dlp" انسٹال کریں۔'
+      : 'Opened YouTube search results. For automatic playback, start the Desktop Bridge and install "pip install websockets yt-dlp".';
 
     return {
       intent: 'youtube',
@@ -256,7 +270,20 @@ export async function processVoiceCommand(
       videoId: exactVideoId,
       isExactMatch: isExact,
       spokenFeedback,
-      actionCard,
+      actionCard: {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        type: 'youtube',
+        title: playingConfirmed ? 'YouTube: ' + (exactTitle || cleanQuery) : 'YouTube Search: "' + cleanQuery + '"',
+        details: playedByBridge
+          ? 'Desktop Bridge resolved the requested song and opened its YouTube watch page.'
+          : isExact
+          ? 'Known video opened directly with autoplay requested.'
+          : 'Search results opened. Automatic playback requires the local bridge and yt-dlp.',
+        status: playingConfirmed ? 'success' : 'info',
+        url: targetUrl,
+        youtubeVideoId: exactVideoId,
+      },
     };
   }
 

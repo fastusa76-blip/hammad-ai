@@ -10,6 +10,8 @@ import platform
 import shutil
 import subprocess
 import sys
+import webbrowser
+from urllib.parse import urlparse
 
 PORT = 8765
 OS_NAME = platform.system().lower()
@@ -21,6 +23,67 @@ def print_banner():
     print(f"   WebSocket Server: ws://localhost:{PORT}")
     print("=" * 60)
     print("[*] Waiting for Hammad Voice AI browser connection...\n")
+
+def open_allowed_url(url):
+    """Open only explicitly allowlisted YouTube URLs in a new browser tab."""
+    if not isinstance(url, str) or len(url) > 2048:
+        print("[!] Rejected invalid URL.")
+        return False
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in {
+        "youtube.com", "www.youtube.com", "music.youtube.com"
+    }:
+        print("[!] Rejected URL outside the YouTube allowlist.")
+        return False
+    opened = webbrowser.open(url, new=2, autoraise=True)
+    if opened:
+        print(f"[+] Opened YouTube URL in a new browser tab: {parsed.hostname}")
+        return True
+    print("[!] The default browser did not confirm opening the URL.")
+    return False
+
+
+def play_youtube_search(query):
+    """Resolve the first YouTube search result to a watch page and open it in a new tab."""
+    if not isinstance(query, str) or not query.strip() or len(query) > 200:
+        print("[!] Rejected empty or overly long YouTube search query.")
+        return False
+    try:
+        import yt_dlp
+    except ImportError:
+        print("[!] Automatic song playback requires yt-dlp. Run: python -m pip install yt-dlp")
+        return False
+
+    try:
+        options = {"quiet": True, "no_warnings": True, "skip_download": True}
+        with yt_dlp.YoutubeDL(options) as ydl:
+            result = ydl.extract_info("ytsearch1:" + query.strip(), download=False)
+        entries = result.get("entries") or []
+        if not entries:
+            print(f"[!] No YouTube results found for: {query!r}")
+            return False
+        video = entries[0]
+        video_id = video.get("id")
+        video_url = video.get("webpage_url") or (
+            "https://www.youtube.com/watch?v=" + video_id if video_id else None
+        )
+        parsed = urlparse(video_url or "")
+        if parsed.scheme != "https" or parsed.hostname not in {"youtube.com", "www.youtube.com"}:
+            print("[!] YouTube search did not return a trusted watch URL.")
+            return False
+        # Request autoplay; the browser may still enforce its own autoplay policy.
+        separator = "&" if "?" in video_url else "?"
+        playback_url = video_url + separator + "autoplay=1"
+        opened = webbrowser.open(playback_url, new=2, autoraise=True)
+        if opened:
+            print(f"[+] Opened YouTube video for query: {query!r}")
+            return True
+        print("[!] The default browser did not confirm opening the video.")
+        return False
+    except Exception as exc:
+        print(f"[!] YouTube search/playback failed: {exc}")
+        return False
+
 
 def launch_application(app_name):
     """Launch only explicitly supported applications and report failures honestly."""
@@ -130,6 +193,22 @@ async def handler(websocket):
                     if not success:
                         response["error"] = "Application launch failed; check the bridge console and app installation."
                     await websocket.send(json.dumps(response))
+                elif action == "open_url":
+                    url = data.get("url")
+                    success = open_allowed_url(url)
+                    await websocket.send(json.dumps({
+                        "requestId": request_id,
+                        "status": "ok" if success else "failed",
+                        "error": None if success else "URL could not be opened; check the bridge console."
+                    }))
+                elif action == "youtube_play":
+                    query = data.get("query")
+                    success = play_youtube_search(query)
+                    await websocket.send(json.dumps({
+                        "requestId": request_id,
+                        "status": "ok" if success else "failed",
+                        "error": None if success else "Could not automatically play this song. Install yt-dlp and check the bridge console."
+                    }))
                 else:
                     await websocket.send(json.dumps({
                         "requestId": request_id,
